@@ -4,7 +4,8 @@ const Support   = require('../support'),
   DataTypes = require('../../../lib/data-types'),
   expectsql = Support.expectsql,
   current   = Support.sequelize,
-  sql       = current.dialect.QueryGenerator;
+  sql       = current.dialect.queryGenerator,
+  _         = require('lodash');
 
 describe(Support.getTestDialectTeaser('SQL'), () => {
   describe('createTable', () => {
@@ -85,29 +86,23 @@ describe(Support.getTestDialectTeaser('SQL'), () => {
 
     if (current.dialect.name === 'postgres') {
       describe('IF NOT EXISTS version check', () => {
-        let backup;
-        before(() => {
-          backup = sql.sequelize.options.databaseVersion;
-        });
-
-        after(() => {
-          sql.sequelize.options.databaseVersion = backup;
-        });
+        const modifiedSQL = _.clone(sql);
+        const createTableQueryModified = sql.createTableQuery.bind(modifiedSQL);
         it('it will not have IF NOT EXISTS for version 9.0 or below', () => {
-          sql.sequelize.options.databaseVersion = '9.0.0';
-          expectsql(sql.createTableQuery(FooUser.getTableName(), sql.attributesToSQL(FooUser.rawAttributes), { }), {
+          modifiedSQL.sequelize.options.databaseVersion = '9.0.0';
+          expectsql(createTableQueryModified(FooUser.getTableName(), sql.attributesToSQL(FooUser.rawAttributes), { }), {
             postgres: 'CREATE TABLE "foo"."users" ("id"   SERIAL , "mood" "foo"."enum_users_mood", PRIMARY KEY ("id"));'
           });
         });
         it('it will have IF NOT EXISTS for version 9.1 or above', () => {
-          sql.sequelize.options.databaseVersion = '9.1.0';
-          expectsql(sql.createTableQuery(FooUser.getTableName(), sql.attributesToSQL(FooUser.rawAttributes), { }), {
+          modifiedSQL.sequelize.options.databaseVersion = '9.1.0';
+          expectsql(createTableQueryModified(FooUser.getTableName(), sql.attributesToSQL(FooUser.rawAttributes), { }), {
             postgres: 'CREATE TABLE IF NOT EXISTS "foo"."users" ("id"   SERIAL , "mood" "foo"."enum_users_mood", PRIMARY KEY ("id"));'
           });
         });
         it('it will have IF NOT EXISTS for default version', () => {
-          sql.sequelize.options.databaseVersion = 0;
-          expectsql(sql.createTableQuery(FooUser.getTableName(), sql.attributesToSQL(FooUser.rawAttributes), { }), {
+          modifiedSQL.sequelize.options.databaseVersion = 0;
+          expectsql(createTableQueryModified(FooUser.getTableName(), sql.attributesToSQL(FooUser.rawAttributes), { }), {
             postgres: 'CREATE TABLE IF NOT EXISTS "foo"."users" ("id"   SERIAL , "mood" "foo"."enum_users_mood", PRIMARY KEY ("id"));'
           });
         });

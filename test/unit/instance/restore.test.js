@@ -38,7 +38,7 @@ describe(Support.getTestDialectTeaser('Instance'), () => {
       });
 
       it('should allow restores even if options are not given', () => {
-        instance = new Model({ id: 1 }, { isNewRecord: false });
+        instance = Model.build({ id: 1 }, { isNewRecord: false });
         expect(() => {
           instance.restore();
         }).to.not.throw();

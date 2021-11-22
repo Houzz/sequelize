@@ -9,15 +9,13 @@ const chai = require('chai'),
 
 describe(Support.getTestDialectTeaser('Instance'), () => {
   describe('save', () => {
-    it('should disallow saves if no primary key values is present', () => {
+    it('should disallow saves if no primary key values is present', async () => {
       const Model = current.define('User', {
 
         }),
-        instance = new Model({}, { isNewRecord: false });
+        instance = Model.build({}, { isNewRecord: false });
 
-      expect(() => {
-        instance.save();
-      }).to.throw();
+      await expect(instance.save()).to.be.rejected;
     });
 
     describe('options tests', () => {
@@ -44,7 +42,7 @@ describe(Support.getTestDialectTeaser('Instance'), () => {
       });
 
       it('should allow saves even if options are not given', () => {
-        instance = new Model({});
+        instance = Model.build({});
         expect(() => {
           instance.save();
         }).to.not.throw();

@@ -1,12 +1,13 @@
 'use strict';
 
-const chai = require('chai');
-const expect = chai.expect;
-const Support = require('../../support');
-const sinon = require('sinon');
-const Config = require('../../../config/config');
-const ConnectionManager = require('../../../../lib/dialects/abstract/connection-manager');
-const Pool = require('sequelize-pool').Pool;
+const chai = require('chai'),
+  expect = chai.expect,
+  deprecations = require('../../../../lib/utils/deprecations'),
+  Support = require('../../support'),
+  sinon = require('sinon'),
+  Config = require('../../../config/config'),
+  ConnectionManager = require('../../../../lib/dialects/abstract/connection-manager'),
+  Pool = require('sequelize-pool').Pool;
 
 const baseConf = Config[Support.getTestDialect()];
 const poolEntry = {
@@ -15,12 +16,11 @@ const poolEntry = {
   pool: {}
 };
 
-describe('Connection Manager', () => {
+describe(Support.getTestDialectTeaser('Connection Manager'), () => {
   let sandbox;
 
   beforeEach(() => {
     sandbox = sinon.createSandbox();
-    sandbox.usingPromise(require('bluebird'));
   });
 
   afterEach(() => {
@@ -32,7 +32,7 @@ describe('Connection Manager', () => {
       replication: null
     };
     const sequelize = Support.createSequelizeInstance(options);
-    const connectionManager = new ConnectionManager(Support.getTestDialect(), sequelize);
+    const connectionManager = new ConnectionManager(sequelize.dialect, sequelize);
 
     connectionManager.initPools();
     expect(connectionManager.pool).to.be.instanceOf(Pool);
@@ -48,14 +48,14 @@ describe('Connection Manager', () => {
       }
     };
     const sequelize = Support.createSequelizeInstance(options);
-    const connectionManager = new ConnectionManager(Support.getTestDialect(), sequelize);
+    const connectionManager = new ConnectionManager(sequelize.dialect, sequelize);
 
     connectionManager.initPools();
     expect(connectionManager.pool.read).to.be.instanceOf(Pool);
     expect(connectionManager.pool.write).to.be.instanceOf(Pool);
   });
 
-  it('should round robin calls to the read pool', () => {
+  it('should round robin calls to the read pool', async () => {
     if (Support.getTestDialect() === 'sqlite') {
       return;
     }
@@ -72,7 +72,7 @@ describe('Connection Manager', () => {
       }
     };
     const sequelize = Support.createSequelizeInstance(options);
-    const connectionManager = new ConnectionManager(Support.getTestDialect(), sequelize);
+    const connectionManager = new ConnectionManager(sequelize.dialect, sequelize);
 
     const res = {
       queryType: 'read'
@@ -80,7 +80,7 @@ describe('Connection Manager', () => {
 
     const connectStub = sandbox.stub(connectionManager, '_connect').resolves(res);
     sandbox.stub(connectionManager, '_disconnect').resolves(res);
-    sandbox.stub(sequelize, 'databaseVersion').resolves(res);
+    sandbox.stub(sequelize, 'databaseVersion').resolves(sequelize.dialect.defaultVersion);
     connectionManager.initPools();
 
     const queryOptions = {
@@ -91,39 +91,31 @@ describe('Connection Manager', () => {
 
     const _getConnection = connectionManager.getConnection.bind(connectionManager, queryOptions);
 
-    return _getConnection()
-      .then(_getConnection)
-      .then(_getConnection)
-      .then(() => {
-        chai.expect(connectStub.callCount).to.equal(4);
+    await _getConnection();
+    await _getConnection();
+    await _getConnection();
+    chai.expect(connectStub.callCount).to.equal(4);
 
-        // First call is the get connection for DB versions - ignore
-        const calls = connectStub.getCalls();
-        chai.expect(calls[1].args[0].host).to.eql('slave1');
-        chai.expect(calls[2].args[0].host).to.eql('slave2');
-        chai.expect(calls[3].args[0].host).to.eql('slave1');
-      });
+    // First call is the get connection for DB versions - ignore
+    const calls = connectStub.getCalls();
+    chai.expect(calls[1].args[0].host).to.eql('slave1');
+    chai.expect(calls[2].args[0].host).to.eql('slave2');
+    chai.expect(calls[3].args[0].host).to.eql('slave1');
   });
 
-  it('should allow forced reads from the write pool', () => {
-    const master = { ...poolEntry };
-    master.host = 'the-boss';
+  it('should trigger deprecation for non supported engine version', async () => {
+    const deprecationStub = sandbox.stub(deprecations, 'unsupportedEngine');
+    const sequelize = Support.createSequelizeInstance();
+    const connectionManager = new ConnectionManager(sequelize.dialect, sequelize);
 
-    const options = {
-      replication: {
-        write: master,
-        read: [{ ...poolEntry }]
-      }
-    };
-    const sequelize = Support.createSequelizeInstance(options);
-    const connectionManager = new ConnectionManager(Support.getTestDialect(), sequelize);
+    sandbox.stub(sequelize, 'databaseVersion').resolves('0.0.1');
 
     const res = {
       queryType: 'read'
     };
-    const connectStub = sandbox.stub(connectionManager, '_connect').resolves(res);
+
+    sandbox.stub(connectionManager, '_connect').resolves(res);
     sandbox.stub(connectionManager, '_disconnect').resolves(res);
-    sandbox.stub(sequelize, 'databaseVersion').resolves(res);
     connectionManager.initPools();
 
     const queryOptions = {
@@ -132,30 +124,59 @@ describe('Connection Manager', () => {
       useMaster: true
     };
 
-    return connectionManager.getConnection(queryOptions)
-      .then(() => {
-        chai.expect(connectStub).to.have.been.calledTwice; // Once to get DB version, and once to actually get the connection.
-        const calls = connectStub.getCalls();
-        chai.expect(calls[1].args[0].host).to.eql('the-boss');
-      });
+    await connectionManager.getConnection(queryOptions);
+    chai.expect(deprecationStub).to.have.been.calledOnce;
   });
 
-  it('should clear the pool after draining it', () => {
+
+  it('should allow forced reads from the write pool', async () => {
+    const main = { ...poolEntry };
+    main.host = 'the-boss';
+
+    const options = {
+      replication: {
+        write: main,
+        read: [{ ...poolEntry }]
+      }
+    };
+    const sequelize = Support.createSequelizeInstance(options);
+    const connectionManager = new ConnectionManager(sequelize.dialect, sequelize);
+
+    const res = {
+      queryType: 'read'
+    };
+
+    const connectStub = sandbox.stub(connectionManager, '_connect').resolves(res);
+    sandbox.stub(connectionManager, '_disconnect').resolves(res);
+    sandbox.stub(sequelize, 'databaseVersion').resolves(sequelize.dialect.defaultVersion);
+    connectionManager.initPools();
+
+    const queryOptions = {
+      priority: 0,
+      type: 'SELECT',
+      useMaster: true
+    };
+
+    await connectionManager.getConnection(queryOptions);
+    chai.expect(connectStub).to.have.been.calledTwice; // Once to get DB version, and once to actually get the connection.
+    const calls = connectStub.getCalls();
+    chai.expect(calls[1].args[0].host).to.eql('the-boss');
+  });
+
+  it('should clear the pool after draining it', async () => {
     const options = {
       replication: null
     };
     const sequelize = Support.createSequelizeInstance(options);
-    const connectionManager = new ConnectionManager(Support.getTestDialect(), sequelize);
+    const connectionManager = new ConnectionManager(sequelize.dialect, sequelize);
 
     connectionManager.initPools();
 
     const poolDrainSpy = sandbox.spy(connectionManager.pool, 'drain');
     const poolClearSpy = sandbox.spy(connectionManager.pool, 'destroyAllNow');
 
-    return connectionManager.close().then(() => {
-      expect(poolDrainSpy.calledOnce).to.be.true;
-      expect(poolClearSpy.calledOnce).to.be.true;
-    });
+    await connectionManager.close();
+    expect(poolDrainSpy.calledOnce).to.be.true;
+    expect(poolClearSpy.calledOnce).to.be.true;
   });
-
 });

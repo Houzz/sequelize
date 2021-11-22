@@ -44,49 +44,52 @@ if (dialect.startsWith('postgres')) {
           expectation: 'CREATE DATABASE "myDatabase" ENCODING = \'UTF8\' LC_COLLATE = \'en_US.UTF-8\' LC_CTYPE = \'zh_TW.UTF-8\' TEMPLATE = \'template0\';'
         }
       ],
+
       dropDatabaseQuery: [
         {
           arguments: ['myDatabase'],
           expectation: 'DROP DATABASE IF EXISTS "myDatabase";'
         }
       ],
+
       arithmeticQuery: [
         {
           title: 'Should use the plus operator',
-          arguments: ['+', 'myTable', { foo: 'bar' }, {}, {}],
-          expectation: 'UPDATE "myTable" SET "foo"="foo"+ \'bar\'  RETURNING *'
+          arguments: ['+', 'myTable', {}, { foo: 'bar' }, {}, {}],
+          expectation: 'UPDATE "myTable" SET "foo"="foo"+ \'bar\' RETURNING *'
         },
         {
           title: 'Should use the plus operator with where clause',
-          arguments: ['+', 'myTable', { foo: 'bar' }, { bar: 'biz' }, {}],
+          arguments: ['+', 'myTable', { bar: 'biz' }, { foo: 'bar' }, {}, {}],
           expectation: 'UPDATE "myTable" SET "foo"="foo"+ \'bar\' WHERE "bar" = \'biz\' RETURNING *'
         },
         {
           title: 'Should use the plus operator without returning clause',
-          arguments: ['+', 'myTable', { foo: 'bar' }, {}, { returning: false }],
+          arguments: ['+', 'myTable', {}, { foo: 'bar' }, {}, { returning: false }],
           expectation: 'UPDATE "myTable" SET "foo"="foo"+ \'bar\''
         },
         {
           title: 'Should use the minus operator',
-          arguments: ['-', 'myTable', { foo: 'bar' }, {}, {}],
-          expectation: 'UPDATE "myTable" SET "foo"="foo"- \'bar\'  RETURNING *'
+          arguments: ['-', 'myTable', {}, { foo: 'bar' }, {}, {}],
+          expectation: 'UPDATE "myTable" SET "foo"="foo"- \'bar\' RETURNING *'
         },
         {
           title: 'Should use the minus operator with negative value',
-          arguments: ['-', 'myTable', { foo: -1 }, {}, {}],
-          expectation: 'UPDATE "myTable" SET "foo"="foo"- -1  RETURNING *'
+          arguments: ['-', 'myTable', {}, { foo: -1 }, {}, {}],
+          expectation: 'UPDATE "myTable" SET "foo"="foo"- -1 RETURNING *'
         },
         {
           title: 'Should use the minus operator with where clause',
-          arguments: ['-', 'myTable', { foo: 'bar' }, { bar: 'biz' }, {}],
+          arguments: ['-', 'myTable', { bar: 'biz' }, { foo: 'bar' }, {}, {}],
           expectation: 'UPDATE "myTable" SET "foo"="foo"- \'bar\' WHERE "bar" = \'biz\' RETURNING *'
         },
         {
           title: 'Should use the minus operator without returning clause',
-          arguments: ['-', 'myTable', { foo: 'bar' }, {}, { returning: false }],
+          arguments: ['-', 'myTable', {}, { foo: 'bar' }, {}, { returning: false }],
           expectation: 'UPDATE "myTable" SET "foo"="foo"- \'bar\''
         }
       ],
+
       attributesToSQL: [
         {
           arguments: [{ id: 'INTEGER' }],
@@ -1254,11 +1257,51 @@ if (dialect.startsWith('postgres')) {
             }
 
             // Options would normally be set by the query interface that instantiates the query-generator, but here we specify it explicitly
-            this.queryGenerator.options = Object.assign({}, this.queryGenerator.options, test.context && test.context.options || {});
+            this.queryGenerator.options = { ...this.queryGenerator.options, ...test.context && test.context.options };
 
             const conditions = this.queryGenerator[suiteTitle](...test.arguments);
             expect(conditions).to.deep.equal(test.expectation);
           });
+        });
+      });
+    });
+
+    describe('fromArray()', () => {
+      beforeEach(function() {
+        this.queryGenerator = new QueryGenerator({
+          sequelize: this.sequelize,
+          _dialect: this.sequelize.dialect
+        });
+      });
+
+      const tests = [
+        {
+          title: 'should convert an enum with no quoted strings to an array',
+          arguments: '{foo,bar,foobar}',
+          expectation: ['foo', 'bar', 'foobar']
+        }, {
+          title: 'should convert an enum starting with a quoted string to an array',
+          arguments: '{"foo bar",foo,bar}',
+          expectation: ['foo bar', 'foo', 'bar']
+        }, {
+          title: 'should convert an enum ending with a quoted string to an array',
+          arguments: '{foo,bar,"foo bar"}',
+          expectation: ['foo', 'bar', 'foo bar']
+        }, {
+          title: 'should convert an enum with a quoted string in the middle to an array',
+          arguments: '{foo,"foo bar",bar}',
+          expectation: ['foo', 'foo bar', 'bar']
+        }, {
+          title: 'should convert an enum full of quoted strings to an array',
+          arguments: '{"foo bar","foo bar","foo bar"}',
+          expectation: ['foo bar', 'foo bar', 'foo bar']
+        }
+      ];
+
+      _.each(tests, test => {
+        it(test.title, function() {
+          const convertedText = this.queryGenerator.fromArray(test.arguments);
+          expect(convertedText).to.deep.equal(test.expectation);
         });
       });
     });

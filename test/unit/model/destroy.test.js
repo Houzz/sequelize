@@ -1,10 +1,11 @@
 'use strict';
 
-const { expect } = require('chai');
-const Support = require('../support');
-const current = Support.sequelize;
-const sinon = require('sinon');
-const DataTypes = require('../../../lib/data-types');
+const chai = require('chai'),
+  expect = chai.expect,
+  Support = require('../support'),
+  current = Support.sequelize,
+  sinon = require('sinon'),
+  DataTypes = require('../../../lib/data-types');
 
 describe(Support.getTestDialectTeaser('Model'), () => {
 
@@ -33,13 +34,10 @@ describe(Support.getTestDialectTeaser('Model'), () => {
       this.stubDelete.restore();
     });
 
-    it('can detect complex objects', () => {
+    it('can detect complex objects', async () => {
       const Where = function() { this.secretValue = '1'; };
 
-      expect(() => {
-        User.destroy({ where: new Where() });
-      }).to.throw();
-
+      await expect(User.destroy({ where: new Where() })).to.be.rejected;
     });
   });
 });

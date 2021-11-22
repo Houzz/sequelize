@@ -1,10 +1,11 @@
 'use strict';
 
-const { expect } = require('chai');
-const Support = require('../support');
-const current = Support.sequelize;
-const sinon = require('sinon');
-const DataTypes = require('../../../lib/data-types');
+const chai = require('chai'),
+  expect = chai.expect,
+  Support = require('../support'),
+  current = Support.sequelize,
+  sinon = require('sinon'),
+  DataTypes = require('../../../lib/data-types');
 
 describe(Support.getTestDialectTeaser('Model'), () => {
   describe('method update', () => {
@@ -31,25 +32,21 @@ describe(Support.getTestDialectTeaser('Model'), () => {
     });
 
     describe('properly clones input values', () => {
-      it('with default options', function() {
-        return this.User.update(this.updates, { where: { secretValue: '1' } }).then(() => {
-          expect(this.updates).to.be.deep.eql(this.cloneUpdates);
-        });
+      it('with default options', async function() {
+        await this.User.update(this.updates, { where: { secretValue: '1' } });
+        expect(this.updates).to.be.deep.eql(this.cloneUpdates);
       });
 
-      it('when using fields option', function() {
-        return this.User.update(this.updates, { where: { secretValue: '1' }, fields: ['name'] }).then(() => {
-          expect(this.updates).to.be.deep.eql(this.cloneUpdates);
-        });
+      it('when using fields option', async function() {
+        await this.User.update(this.updates, { where: { secretValue: '1' }, fields: ['name'] });
+        expect(this.updates).to.be.deep.eql(this.cloneUpdates);
       });
     });
 
-    it('can detect complexe objects', function() {
+    it('can detect complexe objects', async function() {
       const Where = function() { this.secretValue = '1'; };
 
-      expect(() => {
-        this.User.update(this.updates, { where: new Where() });
-      }).to.throw();
+      await expect(this.User.update(this.updates, { where: new Where() })).to.be.rejected;
     });
   });
 });

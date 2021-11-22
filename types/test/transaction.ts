@@ -5,13 +5,55 @@ export const sequelize = new Sequelize('uri');
 
 async function trans() {
     const a: number = await sequelize.transaction(async transaction => {
-        transaction.hooks.add('afterCommit', () => console.log('transaction complete'));
+        transaction.afterCommit(() => console.log('transaction complete'));
         User.create(
             {
-                data: 123,
+                firstName: 'John',
             },
             {
                 transaction,
+            }
+        );
+        return 1;
+    });
+}
+
+async function trans2() {
+    return await sequelize.transaction(async transaction => {
+        transaction.afterCommit(() => console.log('transaction complete'));
+        User.findAll(
+            {
+                transaction,
+                lock: transaction.LOCK.UPDATE,
+            }
+        );
+        return 1;
+    });
+}
+
+async function trans3() {
+    return await sequelize.transaction(async transaction => {
+        transaction.afterCommit(() => console.log('transaction complete'));
+        User.findAll(
+            {
+                transaction,
+                lock: true,
+            }
+        );
+        return 1;
+    });
+}
+
+async function trans4() {
+    return await sequelize.transaction(async transaction => {
+        transaction.afterCommit(() => console.log('transaction complete'));
+        User.findAll(
+            {
+                transaction,
+                lock: {
+                    level: transaction.LOCK.UPDATE,
+                    of: User,
+                },
             }
         );
         return 1;
@@ -35,4 +77,10 @@ async function nestedTransact() {
     transaction: await sequelize.transaction(),
   });
   await tr.commit();
+}
+
+async function excludeFromTransaction() {
+  await sequelize.transaction(async t =>
+    await sequelize.query('SELECT 1', { transaction: null })
+  );
 }

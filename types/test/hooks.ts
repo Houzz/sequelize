@@ -1,42 +1,90 @@
-import {Model, SaveOptions, Sequelize, FindOptions} from "sequelize"
+import { expectTypeOf } from "expect-type";
+import { FindOptions, Model, QueryOptions, SaveOptions, Sequelize, UpsertOptions } from "sequelize";
 import { ModelHooks } from "../lib/hooks";
+import { AbstractQuery } from "../lib/query";
+import { Config } from '../lib/sequelize';
+import { DeepWriteable } from '../lib/utils';
+import { SemiDeepWritable } from "./type-helpers/deep-writable";
 
-/*
- * covers types/lib/sequelize.d.ts
- */
+{
+  class TestModel extends Model {}
 
-Sequelize.hooks.add('beforeSave', (t: TestModel, options: SaveOptions) => {});
-Sequelize.hooks.add('afterSave', (t: TestModel, options: SaveOptions) => {});
-Sequelize.hooks.add('afterFind', (t: TestModel[] | TestModel | null, options: FindOptions) => {});
-Sequelize.hooks.add('afterFind', (t: TestModel[] | TestModel | null, options: FindOptions) => {});
+  const hooks: Partial<ModelHooks> = {
+    beforeSave(m, options) {
+      expectTypeOf(m).toEqualTypeOf<TestModel>();
+      expectTypeOf(options).toMatchTypeOf<SaveOptions>(); // TODO consider `.toEqualTypeOf` instead ?
+    },
+    afterSave(m, options) {
+      expectTypeOf(m).toEqualTypeOf<TestModel>();
+      expectTypeOf(options).toMatchTypeOf<SaveOptions>(); // TODO consider `.toEqualTypeOf` instead ?
+    },
+    afterFind(m, options) {
+      expectTypeOf(m).toEqualTypeOf<readonly TestModel[] | TestModel | null>();
+      expectTypeOf(options).toEqualTypeOf<FindOptions>();
+    },
+    beforeUpsert(m, options) {
+      expectTypeOf(m).toEqualTypeOf<TestModel>();
+      expectTypeOf(options).toEqualTypeOf<UpsertOptions>();
+    },
+    afterUpsert(m, options) {
+      expectTypeOf(m).toEqualTypeOf<[ TestModel, boolean | null ]>();
+      expectTypeOf(options).toEqualTypeOf<UpsertOptions>();
+    },
+    beforeQuery(options, query) {
+      expectTypeOf(options).toEqualTypeOf<QueryOptions>();
+      expectTypeOf(query).toEqualTypeOf<AbstractQuery>();
+    },
+    afterQuery(options, query) {
+      expectTypeOf(options).toEqualTypeOf<QueryOptions>();
+      expectTypeOf(query).toEqualTypeOf<AbstractQuery>();
+    },
+  };
 
-Sequelize.hooks.add('beforeSave', m => {
+  const sequelize = new Sequelize('uri', { hooks });
+  TestModel.init({}, { sequelize, hooks });
 
-});
-/*
- * covers types/lib/hooks.d.ts
- */
+  TestModel.addHook('beforeSave', hooks.beforeSave!);
+  TestModel.addHook('afterSave', hooks.afterSave!);
+  TestModel.addHook('afterFind', hooks.afterFind!);
+  TestModel.addHook('beforeUpsert', hooks.beforeUpsert!);
+  TestModel.addHook('afterUpsert', hooks.afterUpsert!);
 
-export const sequelize = new Sequelize('uri', {
-  hooks: {
-    beforeSave (m: Model, options: SaveOptions) {},
-    afterSave (m: Model, options: SaveOptions) {},
-    afterFind (m: Model[] | Model | null, options: FindOptions) {},
-  }
-});
+  TestModel.beforeSave(hooks.beforeSave!);
+  TestModel.afterSave(hooks.afterSave!);
+  TestModel.afterFind(hooks.afterFind!);
 
-class TestModel extends Model {
+  Sequelize.beforeSave(hooks.beforeSave!);
+  Sequelize.afterSave(hooks.afterSave!);
+  Sequelize.afterFind(hooks.afterFind!);
+  Sequelize.afterFind('namedAfterFind', hooks.afterFind!);
 }
 
-const hooks: Partial<ModelHooks> = {
-  beforeSave(t: TestModel, options: SaveOptions) { },
-  afterSave(t: TestModel, options: SaveOptions) { },
-  afterFind(t: TestModel | TestModel[] | null, options: FindOptions) { },
-};
+// #12959
+{
+  const hooks: ModelHooks = 0 as any;
 
-TestModel.init({}, {sequelize, hooks })
+  hooks.beforeValidate = (...args) => { expectTypeOf(args).toEqualTypeOf<SemiDeepWritable<typeof args>>() };
+  hooks.beforeCreate = (...args) => { expectTypeOf(args).toEqualTypeOf<SemiDeepWritable<typeof args>>() };
+  hooks.beforeDestroy = (...args) => { expectTypeOf(args).toEqualTypeOf<SemiDeepWritable<typeof args>>() };
+  hooks.beforeRestore = (...args) => { expectTypeOf(args).toEqualTypeOf<SemiDeepWritable<typeof args>>() };
+  hooks.beforeUpdate = (...args) => { expectTypeOf(args).toEqualTypeOf<SemiDeepWritable<typeof args>>() };
+  hooks.beforeSave = (...args) => { expectTypeOf(args).toEqualTypeOf<SemiDeepWritable<typeof args>>() };
+  hooks.beforeBulkCreate = (...args) => { expectTypeOf(args).toEqualTypeOf<SemiDeepWritable<typeof args>>() };
+  hooks.beforeBulkDestroy = (...args) => { expectTypeOf(args).toEqualTypeOf<SemiDeepWritable<typeof args>>() };
+  hooks.beforeBulkRestore = (...args) => { expectTypeOf(args).toEqualTypeOf<SemiDeepWritable<typeof args>>() };
+  hooks.beforeBulkUpdate = (...args) => { expectTypeOf(args).toEqualTypeOf<SemiDeepWritable<typeof args>>() };
+  hooks.beforeFind = (...args) => { expectTypeOf(args).toEqualTypeOf<SemiDeepWritable<typeof args>>() };
+  hooks.beforeCount = (...args) => { expectTypeOf(args).toEqualTypeOf<SemiDeepWritable<typeof args>>() };
+  hooks.beforeFindAfterExpandIncludeAll = (...args) => { expectTypeOf(args).toEqualTypeOf<SemiDeepWritable<typeof args>>() };
+  hooks.beforeFindAfterOptions = (...args) => { expectTypeOf(args).toEqualTypeOf<SemiDeepWritable<typeof args>>() };
+  hooks.beforeSync = (...args) => { expectTypeOf(args).toEqualTypeOf<SemiDeepWritable<typeof args>>() };
+  hooks.beforeBulkSync = (...args) => { expectTypeOf(args).toEqualTypeOf<SemiDeepWritable<typeof args>>() };
+  hooks.beforeQuery = (...args) => { expectTypeOf(args).toEqualTypeOf<SemiDeepWritable<typeof args>>() };
+  hooks.beforeUpsert = (...args) => { expectTypeOf(args).toEqualTypeOf<SemiDeepWritable<typeof args>>() };
+}
 
-TestModel.hooks.add('beforeSave', (t: TestModel, options: SaveOptions) => { });
-TestModel.hooks.add('afterSave', (t: TestModel, options: SaveOptions) => { });
-TestModel.hooks.add('afterFind', (t: TestModel[] | TestModel | null, options: FindOptions) => { });
-
+{
+  Sequelize.beforeConnect('name', config => expectTypeOf(config).toEqualTypeOf<DeepWriteable<Config>>());
+  Sequelize.beforeConnect(config => expectTypeOf(config).toEqualTypeOf<DeepWriteable<Config>>());
+  Sequelize.addHook('beforeConnect', (...args) => { expectTypeOf(args).toEqualTypeOf<[DeepWriteable<Config>]>(); })
+}

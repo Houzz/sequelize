@@ -38,7 +38,7 @@ describe(Support.getTestDialectTeaser('Instance'), () => {
       });
 
       it('should allow reloads even if options are not given', () => {
-        instance = new Model({ id: 1 }, { isNewRecord: false });
+        instance = Model.build({ id: 1 }, { isNewRecord: false });
         expect(() => {
           instance.reload();
         }).to.not.throw();

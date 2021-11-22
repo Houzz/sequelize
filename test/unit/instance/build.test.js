@@ -8,7 +8,7 @@ const chai = require('chai'),
 
 describe(Support.getTestDialectTeaser('Instance'), () => {
   describe('build', () => {
-    it('should populate NOW default values', () => {
+    it('should populate NOW default values', async () => {
       const Model = current.define('Model', {
           created_time: {
             type: DataTypes.DATE,
@@ -37,7 +37,7 @@ describe(Support.getTestDialectTeaser('Instance'), () => {
         }, {
           timestamp: false
         }),
-        instance = new Model({ ip: '127.0.0.1', ip2: '0.0.0.0' });
+        instance = Model.build({ ip: '127.0.0.1', ip2: '0.0.0.0' });
 
       expect(instance.get('created_time')).to.be.ok;
       expect(instance.get('created_time')).to.be.an.instanceof(Date);
@@ -45,7 +45,7 @@ describe(Support.getTestDialectTeaser('Instance'), () => {
       expect(instance.get('updated_time')).to.be.ok;
       expect(instance.get('updated_time')).to.be.an.instanceof(Date);
 
-      return instance.validate();
+      await instance.validate();
     });
 
     it('should populate explicitly undefined UUID primary keys', () => {
@@ -57,7 +57,7 @@ describe(Support.getTestDialectTeaser('Instance'), () => {
             defaultValue: DataTypes.UUIDV4
           }
         }),
-        instance  = new Model({
+        instance  = Model.build({
           id: undefined
         });
 
@@ -76,7 +76,7 @@ describe(Support.getTestDialectTeaser('Instance'), () => {
             defaultValue: 2
           }
         }),
-        instance = new Model({
+        instance = Model.build({
           number1: undefined
         });
 
@@ -93,11 +93,11 @@ describe(Support.getTestDialectTeaser('Instance'), () => {
             defaultValue: { foo: 'bar' }
           }
         }),
-        instance = new Model();
+        instance = Model.build();
       instance.data.foo = 'biz';
 
       expect(instance.get('data')).to.eql({ foo: 'biz' });
-      expect(new Model().get('data')).to.eql({ foo: 'bar' });
+      expect(Model.build().get('data')).to.eql({ foo: 'bar' });
     });
   });
 });

@@ -30,7 +30,7 @@ describe(Support.getTestDialectTeaser('Model'), () => {
 
       Model.removeAttribute('id');
 
-      const instance = new Model();
+      const instance = Model.build();
       expect(instance.dataValues).not.to.include.keys('undefined');
     });
   });

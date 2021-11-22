@@ -1,6 +1,5 @@
 import * as DataTypes from './data-types';
-import * as Deferrable from './deferrable';
-import { HookReturn, SequelizeHooks, Hooks } from './hooks';
+import { HookReturn, Hooks, SequelizeHooks } from './hooks';
 import { ValidationOptions } from './instance-validator';
 import {
   AndOperator,
@@ -20,23 +19,30 @@ import {
   WhereAttributeHash,
   WhereOperators,
   ModelCtor,
+  Hookable,
+  ModelType,
 } from './model';
 import { ModelManager } from './model-manager';
-import * as Op from './operators';
-import { Promise } from './promise';
-import { QueryInterface, QueryOptions, QueryOptionsWithModel, QueryOptionsWithType } from './query-interface';
+import { QueryInterface, QueryOptions, QueryOptionsWithModel, QueryOptionsWithType, ColumnsDescription } from './query-interface';
 import QueryTypes = require('./query-types');
 import { Transaction, TransactionOptions } from './transaction';
-import { Cast, Col, Fn, Json, Literal, Where } from './utils';
-// tslint:disable-next-line:no-duplicate-imports
-import * as Utils from './utils';
-import { validator } from './utils/validator-extras';
+import { Cast, Col, DeepWriteable, Fn, Json, Literal, Where } from './utils';
 import { ConnectionManager } from './connection-manager';
+
+/**
+ * Additional options for table altering during sync
+ */
+export interface SyncAlterOptions {
+  /**
+   * Prevents any drop statements while altering a table when set to `false`
+   */
+  drop?: boolean;
+}
 
 /**
  * Sync Options
  */
-export interface SyncOptions extends Logging {
+export interface SyncOptions extends Logging, Hookable {
   /**
    * If force is true, each DAO will do DROP TABLE IF EXISTS ..., before it tries to create its own table
    */
@@ -44,9 +50,9 @@ export interface SyncOptions extends Logging {
 
   /**
    * If alter is true, each DAO will do ALTER TABLE ... CHANGE ...
-   * Alters tables to fit models. Not recommended for production use. Deletes data in columns that were removed or had their type changed in the model.
+   * Alters tables to fit models. Provide an object for additional configuration. Not recommended for production use. If not further configured deletes data in columns that were removed or had their type changed in the model.
    */
-  alter?: boolean;
+  alter?: boolean | SyncAlterOptions;
 
   /**
    * Match a regex against the database name before syncing, a safety check for cases where force: true is
@@ -64,13 +70,9 @@ export interface SyncOptions extends Logging {
    */
   searchPath?: string;
 
-  /**
-   * If hooks is true then beforeSync, afterSync, beforeBulkSync, afterBulkSync hooks will be called
-   */
-  hooks?: boolean;
 }
 
-export interface DefaultSetOptions {}
+export interface DefaultSetOptions { }
 
 /**
  * Connection Pool options
@@ -102,6 +104,11 @@ export interface PoolOptions {
   evict?: number;
 
   /**
+   * The number of times to use a connection before closing and replacing it.  Default is Infinity
+   */
+  maxUses?: number;
+
+  /**
    * A function that validates a connection. Called with client. The default function checks that client is an
    * object, and that its state is not disconnected
    */
@@ -123,6 +130,13 @@ export interface ReplicationOptions {
   read: ConnectionOptions[];
 
   write: ConnectionOptions;
+}
+
+/**
+ * Used to map operators to their Symbol representations
+ */
+export interface OperatorsAliases {
+  [K: string]: symbol;
 }
 
 /**
@@ -153,7 +167,7 @@ export interface Config {
   };
 }
 
-export type Dialect =  'mysql' | 'postgres' | 'sqlite' | 'mariadb' | 'mssql' | 'mariadb';
+export type Dialect = 'mysql' | 'postgres' | 'sqlite' | 'mariadb' | 'mssql';
 
 export interface RetryOptions {
   match?: (RegExp | string | Function)[];
@@ -315,12 +329,29 @@ export interface Options extends Logging {
   isolationLevel?: string;
 
   /**
+   * Set the default transaction type. See Sequelize.Transaction.TYPES for possible options. Sqlite only.
+   *
+   * @default 'DEFERRED'
+   */
+  transactionType?: Transaction.TYPES;
+
+  /**
    * Run built in type validators on insert and update, e.g. validate that arguments passed to integer
    * fields are integer-like.
    *
    * @default false
    */
   typeValidation?: boolean;
+
+  /**
+   * Sets available operator aliases.
+   * See (https://sequelize.org/master/manual/querying.html#operators) for more information.
+   * WARNING: Setting this to boolean value was deprecated and is no-op.
+   *
+   * @default all aliases
+   */
+  operatorsAliases?: OperatorsAliases;
+
 
   /**
    * The PostgreSQL `standard_conforming_strings` session parameter. Set to `false` to not set the option.
@@ -331,9 +362,17 @@ export interface Options extends Logging {
   standardConformingStrings?: boolean;
 
   /**
+   * The PostgreSQL `client_min_messages` session parameter.
+   * Set to `false` to not override the database's default.
+   *
+   * @default 'warning'
+   */
+  clientMinMessages?: string | boolean;
+
+  /**
    * Sets global permanent hooks.
    */
-  hooks?: Partial<SequelizeHooks>;
+  hooks?: Partial<SequelizeHooks<Model, any, any>>;
 
   /**
    * Set to `true` to automatically minify aliases generated by sequelize.
@@ -344,7 +383,7 @@ export interface Options extends Logging {
   minifyAliases?: boolean;
 
   /**
-   * Set to `true` to show bind patameters in log.
+   * Set to `true` to show bind parameters in log.
    *
    * @default false
    */
@@ -353,7 +392,7 @@ export interface Options extends Logging {
   retry?: RetryOptions;
 }
 
-export interface QueryOptionsTransactionRequired {}
+export interface QueryOptionsTransactionRequired { }
 
 /**
  * This is the main class, the entry point to sequelize. To use it, you just need to
@@ -367,7 +406,7 @@ export interface QueryOptionsTransactionRequired {}
  * should also be installed in your project. You don't need to import it however, as
  * sequelize will take care of that.
  */
-export class Sequelize {
+export class Sequelize extends Hooks {
 
   // -------------------- Utilities ------------------------------------------------------------------------
 
@@ -456,6 +495,318 @@ export class Sequelize {
   public static where: typeof where;
 
   /**
+   * A hook that is run before validation
+   *
+   * @param name
+   * @param fn A callback function that is called with instance, options
+   */
+  public static beforeValidate(name: string, fn: (instance: Model, options: ValidationOptions) => void): void;
+  public static beforeValidate(fn: (instance: Model, options: ValidationOptions) => void): void;
+
+  /**
+   * A hook that is run after validation
+   *
+   * @param name
+   * @param fn A callback function that is called with instance, options
+   */
+  public static afterValidate(name: string, fn: (instance: Model, options: ValidationOptions) => void): void;
+  public static afterValidate(fn: (instance: Model, options: ValidationOptions) => void): void;
+
+  /**
+   * A hook that is run before creating a single instance
+   *
+   * @param name
+   * @param fn A callback function that is called with attributes, options
+   */
+  public static beforeCreate(name: string, fn: (attributes: Model, options: CreateOptions<any>) => void): void;
+  public static beforeCreate(fn: (attributes: Model, options: CreateOptions<any>) => void): void;
+
+  /**
+   * A hook that is run after creating a single instance
+   *
+   * @param name
+   * @param fn A callback function that is called with attributes, options
+   */
+  public static afterCreate(name: string, fn: (attributes: Model, options: CreateOptions<any>) => void): void;
+  public static afterCreate(fn: (attributes: Model, options: CreateOptions<any>) => void): void;
+
+  /**
+   * A hook that is run before destroying a single instance
+   *
+   * @param name
+   * @param fn A callback function that is called with instance, options
+   */
+  public static beforeDestroy(name: string, fn: (instance: Model, options: InstanceDestroyOptions) => void): void;
+  public static beforeDestroy(fn: (instance: Model, options: InstanceDestroyOptions) => void): void;
+
+  /**
+   * A hook that is run after destroying a single instance
+   *
+   * @param name
+   * @param fn A callback function that is called with instance, options
+   */
+  public static afterDestroy(name: string, fn: (instance: Model, options: InstanceDestroyOptions) => void): void;
+  public static afterDestroy(fn: (instance: Model, options: InstanceDestroyOptions) => void): void;
+
+  /**
+   * A hook that is run before updating a single instance
+   *
+   * @param name
+   * @param fn A callback function that is called with instance, options
+   */
+  public static beforeUpdate(name: string, fn: (instance: Model, options: UpdateOptions<any>) => void): void;
+  public static beforeUpdate(fn: (instance: Model, options: UpdateOptions<any>) => void): void;
+
+  /**
+   * A hook that is run after updating a single instance
+   *
+   * @param name
+   * @param fn A callback function that is called with instance, options
+   */
+  public static afterUpdate(name: string, fn: (instance: Model, options: UpdateOptions<any>) => void): void;
+  public static afterUpdate(fn: (instance: Model, options: UpdateOptions<any>) => void): void;
+
+  /**
+   * A hook that is run before creating or updating a single instance, It proxies `beforeCreate` and `beforeUpdate`
+   *
+   * @param name
+   * @param fn A callback function that is called with instance, options
+   */
+  public static beforeSave(
+    name: string,
+    fn: (instance: Model, options: UpdateOptions<any> | CreateOptions<any>) => void
+  ): void;
+  public static beforeSave(fn: (instance: Model, options: UpdateOptions<any> | CreateOptions<any>) => void): void;
+
+  /**
+   * A hook that is run after creating or updating a single instance, It proxies `afterCreate` and `afterUpdate`
+   *
+   * @param name
+   * @param fn A callback function that is called with instance, options
+   */
+  public static afterSave(
+    name: string,
+    fn: (instance: Model, options: UpdateOptions<any> | CreateOptions<any>) => void
+  ): void;
+  public static afterSave(
+    fn: (instance: Model, options: UpdateOptions<any> | CreateOptions<any>) => void
+  ): void;
+
+  /**
+   * A hook that is run before creating instances in bulk
+   *
+   * @param name
+   * @param fn A callback function that is called with instances, options
+   */
+  public static beforeBulkCreate(
+    name: string,
+    fn: (instances: Model[], options: BulkCreateOptions<any>) => void
+  ): void;
+  public static beforeBulkCreate(fn: (instances: Model[], options: BulkCreateOptions<any>) => void): void;
+
+  /**
+   * A hook that is run after creating instances in bulk
+   *
+   * @param name
+   * @param fn A callback function that is called with instances, options
+   */
+  public static afterBulkCreate(
+    name: string, fn: (instances: Model[], options: BulkCreateOptions<any>) => void
+  ): void;
+  public static afterBulkCreate(fn: (instances: Model[], options: BulkCreateOptions<any>) => void): void;
+
+  /**
+   * A hook that is run before destroying instances in bulk
+   *
+   * @param name
+   * @param fn   A callback function that is called with options
+   */
+  public static beforeBulkDestroy(name: string, fn: (options: BulkCreateOptions<any>) => void): void;
+  public static beforeBulkDestroy(fn: (options: BulkCreateOptions<any>) => void): void;
+
+  /**
+   * A hook that is run after destroying instances in bulk
+   *
+   * @param name
+   * @param fn   A callback function that is called with options
+   */
+  public static afterBulkDestroy(name: string, fn: (options: DestroyOptions<any>) => void): void;
+  public static afterBulkDestroy(fn: (options: DestroyOptions<any>) => void): void;
+
+  /**
+   * A hook that is run after updating instances in bulk
+   *
+   * @param name
+   * @param fn   A callback function that is called with options
+   */
+  public static beforeBulkUpdate(name: string, fn: (options: UpdateOptions<any>) => void): void;
+  public static beforeBulkUpdate(fn: (options: UpdateOptions<any>) => void): void;
+
+  /**
+   * A hook that is run after updating instances in bulk
+   *
+   * @param name
+   * @param fn   A callback function that is called with options
+   */
+  public static afterBulkUpdate(name: string, fn: (options: UpdateOptions<any>) => void): void;
+  public static afterBulkUpdate(fn: (options: UpdateOptions<any>) => void): void;
+
+  /**
+   * A hook that is run before a find (select) query
+   *
+   * @param name
+   * @param fn   A callback function that is called with options
+   */
+  public static beforeFind(name: string, fn: (options: FindOptions<any>) => void): void;
+  public static beforeFind(fn: (options: FindOptions<any>) => void): void;
+
+  /**
+   * A hook that is run before a connection is established
+   *
+   * @param name
+   * @param fn   A callback function that is called with options
+   */
+  public static beforeConnect(name: string, fn: (options: DeepWriteable<Config>) => void): void;
+  public static beforeConnect(fn: (options: DeepWriteable<Config>) => void): void;
+
+  /**
+   * A hook that is run after a connection is established
+   *
+   * @param name
+   * @param fn   A callback function that is called with options
+   */
+  public static afterConnect(name: string, fn: (connection: unknown, options: Config) => void): void;
+  public static afterConnect(fn: (connection: unknown, options: Config) => void): void;
+
+  /**
+   * A hook that is run before a connection is released
+   *
+   * @param name
+   * @param fn   A callback function that is called with options
+   */
+  public static beforeDisconnect(name: string, fn: (connection: unknown) => void): void;
+  public static beforeDisconnect(fn: (connection: unknown) => void): void;
+
+  /**
+   * A hook that is run after a connection is released
+   *
+   * @param name
+   * @param fn   A callback function that is called with options
+   */
+  public static afterDisconnect(name: string, fn: (connection: unknown) => void): void;
+  public static afterDisconnect(fn: (connection: unknown) => void): void;
+
+  /**
+   * A hook that is run before a find (select) query, after any { include: {all: ...} } options are expanded
+   *
+   * @param name
+   * @param fn   A callback function that is called with options
+   */
+  public static beforeFindAfterExpandIncludeAll(name: string, fn: (options: FindOptions<any>) => void): void;
+  public static beforeFindAfterExpandIncludeAll(fn: (options: FindOptions<any>) => void): void;
+
+  /**
+   * A hook that is run before a find (select) query, after all option parsing is complete
+   *
+   * @param name
+   * @param fn   A callback function that is called with options
+   */
+  public static beforeFindAfterOptions(name: string, fn: (options: FindOptions<any>) => void): void;
+  public static beforeFindAfterOptions(fn: (options: FindOptions<any>) => void): void;
+
+  /**
+   * A hook that is run after a find (select) query
+   *
+   * @param name
+   * @param fn   A callback function that is called with instance(s), options
+   */
+  public static afterFind(
+    name: string,
+    fn: (instancesOrInstance: Model[] | Model | null, options: FindOptions<any>) => void
+  ): void;
+  public static afterFind(
+    fn: (instancesOrInstance: Model[] | Model | null, options: FindOptions<any>) => void
+  ): void;
+
+  /**
+   * A hook that is run before a define call
+   *
+   * @param name
+   * @param fn   A callback function that is called with attributes, options
+   */
+  public static beforeDefine<M extends Model>(
+    name: string,
+    fn: (attributes: ModelAttributes<M, M['_creationAttributes']>, options: ModelOptions<M>) => void
+  ): void;
+  public static beforeDefine<M extends Model>(
+    fn: (attributes: ModelAttributes<M, M['_creationAttributes']>, options: ModelOptions<M>) => void
+  ): void;
+
+  /**
+   * A hook that is run after a define call
+   *
+   * @param name
+   * @param fn   A callback function that is called with factory
+   */
+  public static afterDefine(name: string, fn: (model: ModelType) => void): void;
+  public static afterDefine(fn: (model: ModelType) => void): void;
+
+  /**
+   * A hook that is run before Sequelize() call
+   *
+   * @param name
+   * @param fn   A callback function that is called with config, options
+   */
+  public static beforeInit(name: string, fn: (config: Config, options: Options) => void): void;
+  public static beforeInit(fn: (config: Config, options: Options) => void): void;
+
+  /**
+   * A hook that is run after Sequelize() call
+   *
+   * @param name
+   * @param fn   A callback function that is called with sequelize
+   */
+  public static afterInit(name: string, fn: (sequelize: Sequelize) => void): void;
+  public static afterInit(fn: (sequelize: Sequelize) => void): void;
+
+  /**
+   * A hook that is run before sequelize.sync call
+   * @param fn   A callback function that is called with options passed to sequelize.sync
+   */
+  public static beforeBulkSync(dname: string, fn: (options: SyncOptions) => HookReturn): void;
+  public static beforeBulkSync(fn: (options: SyncOptions) => HookReturn): void;
+
+  /**
+   * A hook that is run after sequelize.sync call
+   * @param fn   A callback function that is called with options passed to sequelize.sync
+   */
+  public static afterBulkSync(name: string, fn: (options: SyncOptions) => HookReturn): void;
+  public static afterBulkSync(fn: (options: SyncOptions) => HookReturn): void;
+
+  /**
+   * A hook that is run before Model.sync call
+   * @param fn   A callback function that is called with options passed to Model.sync
+   */
+  public static beforeSync(name: string, fn: (options: SyncOptions) => HookReturn): void;
+  public static beforeSync(fn: (options: SyncOptions) => HookReturn): void;
+
+  /**
+   * A hook that is run after Model.sync call
+   * @param fn   A callback function that is called with options passed to Model.sync
+   */
+  public static afterSync(name: string, fn: (options: SyncOptions) => HookReturn): void;
+  public static afterSync(fn: (options: SyncOptions) => HookReturn): void;
+
+  /**
+   * Use CLS with Sequelize.
+   * CLS namespace provided is stored as `Sequelize._cls`
+   * and Promise is patched to use the namespace, using `cls-hooked` module.
+   *
+   * @param namespace
+   */
+  public static useCLS(namespace: object): typeof Sequelize;
+
+  /**
    * A reference to Sequelize constructor from sequelize. Useful for accessing DataTypes, Errors etc.
    */
   public Sequelize: typeof Sequelize;
@@ -475,9 +826,6 @@ export class Sequelize {
   public readonly models: {
     [key: string]: ModelCtor<Model>;
   };
-
-  public readonly hooks: Hooks<SequelizeHooks>;
-  public static readonly hooks: Hooks<SequelizeHooks>;
 
   /**
    * Instantiate sequelize with name of database, username and password
@@ -520,9 +868,244 @@ export class Sequelize {
   constructor(uri: string, options?: Options);
 
   /**
+   * A hook that is run before validation
+   *
+   * @param name
+   * @param fn A callback function that is called with instance, options
+   */
+  public beforeValidate(name: string, fn: (instance: Model, options: ValidationOptions) => void): void;
+  public beforeValidate(fn: (instance: Model, options: ValidationOptions) => void): void;
+
+  /**
+   * A hook that is run after validation
+   *
+   * @param name
+   * @param fn A callback function that is called with instance, options
+   */
+  public afterValidate(name: string, fn: (instance: Model, options: ValidationOptions) => void): void;
+  public afterValidate(fn: (instance: Model, options: ValidationOptions) => void): void;
+
+  /**
+   * A hook that is run before creating a single instance
+   *
+   * @param name
+   * @param fn A callback function that is called with attributes, options
+   */
+  public beforeCreate(name: string, fn: (attributes: Model, options: CreateOptions<any>) => void): void;
+  public beforeCreate(fn: (attributes: Model, options: CreateOptions<any>) => void): void;
+
+  /**
+   * A hook that is run after creating a single instance
+   *
+   * @param name
+   * @param fn A callback function that is called with attributes, options
+   */
+  public afterCreate(name: string, fn: (attributes: Model, options: CreateOptions<any>) => void): void;
+  public afterCreate(fn: (attributes: Model, options: CreateOptions<any>) => void): void;
+
+  /**
+   * A hook that is run before destroying a single instance
+   *
+   * @param name
+   * @param fn A callback function that is called with instance, options
+   */
+  public beforeDestroy(name: string, fn: (instance: Model, options: InstanceDestroyOptions) => void): void;
+  public beforeDestroy(fn: (instance: Model, options: InstanceDestroyOptions) => void): void;
+
+  /**
+   * A hook that is run after destroying a single instance
+   *
+   * @param name
+   * @param fn A callback function that is called with instance, options
+   */
+  public afterDestroy(name: string, fn: (instance: Model, options: InstanceDestroyOptions) => void): void;
+  public afterDestroy(fn: (instance: Model, options: InstanceDestroyOptions) => void): void;
+
+  /**
+   * A hook that is run before updating a single instance
+   *
+   * @param name
+   * @param fn A callback function that is called with instance, options
+   */
+  public beforeUpdate(name: string, fn: (instance: Model, options: UpdateOptions<any>) => void): void;
+  public beforeUpdate(fn: (instance: Model, options: UpdateOptions<any>) => void): void;
+
+  /**
+   * A hook that is run after updating a single instance
+   *
+   * @param name
+   * @param fn A callback function that is called with instance, options
+   */
+  public afterUpdate(name: string, fn: (instance: Model, options: UpdateOptions<any>) => void): void;
+  public afterUpdate(fn: (instance: Model, options: UpdateOptions<any>) => void): void;
+
+  /**
+   * A hook that is run before creating instances in bulk
+   *
+   * @param name
+   * @param fn A callback function that is called with instances, options
+   */
+  public beforeBulkCreate(name: string, fn: (instances: Model[], options: BulkCreateOptions<any>) => void): void;
+  public beforeBulkCreate(fn: (instances: Model[], options: BulkCreateOptions<any>) => void): void;
+
+  /**
+   * A hook that is run after creating instances in bulk
+   *
+   * @param name
+   * @param fn A callback function that is called with instances, options
+   */
+  public afterBulkCreate(name: string, fn: (instances: Model[], options: BulkCreateOptions<any>) => void): void;
+  public afterBulkCreate(fn: (instances: Model[], options: BulkCreateOptions<any>) => void): void;
+
+  /**
+   * A hook that is run before destroying instances in bulk
+   *
+   * @param name
+   * @param fn   A callback function that is called with options
+   */
+  public beforeBulkDestroy(name: string, fn: (options: BulkCreateOptions<any>) => void): void;
+  public beforeBulkDestroy(fn: (options: BulkCreateOptions<any>) => void): void;
+
+  /**
+   * A hook that is run after destroying instances in bulk
+   *
+   * @param name
+   * @param fn   A callback function that is called with options
+   */
+  public afterBulkDestroy(name: string, fn: (options: DestroyOptions<any>) => void): void;
+  public afterBulkDestroy(fn: (options: DestroyOptions<any>) => void): void;
+
+  /**
+   * A hook that is run after updating instances in bulk
+   *
+   * @param name
+   * @param fn   A callback function that is called with options
+   */
+  public beforeBulkUpdate(name: string, fn: (options: UpdateOptions<any>) => void): void;
+  public beforeBulkUpdate(fn: (options: UpdateOptions<any>) => void): void;
+
+  /**
+   * A hook that is run after updating instances in bulk
+   *
+   * @param name
+   * @param fn   A callback function that is called with options
+   */
+  public afterBulkUpdate(name: string, fn: (options: UpdateOptions<any>) => void): void;
+  public afterBulkUpdate(fn: (options: UpdateOptions<any>) => void): void;
+
+  /**
+   * A hook that is run before a find (select) query
+   *
+   * @param name
+   * @param fn   A callback function that is called with options
+   */
+  public beforeFind(name: string, fn: (options: FindOptions<any>) => void): void;
+  public beforeFind(fn: (options: FindOptions<any>) => void): void;
+
+  /**
+   * A hook that is run before a find (select) query, after any { include: {all: ...} } options are expanded
+   *
+   * @param name
+   * @param fn   A callback function that is called with options
+   */
+  public beforeFindAfterExpandIncludeAll(name: string, fn: (options: FindOptions<any>) => void): void;
+  public beforeFindAfterExpandIncludeAll(fn: (options: FindOptions<any>) => void): void;
+
+  /**
+   * A hook that is run before a find (select) query, after all option parsing is complete
+   *
+   * @param name
+   * @param fn   A callback function that is called with options
+   */
+  public beforeFindAfterOptions(name: string, fn: (options: FindOptions<any>) => void): void;
+  public beforeFindAfterOptions(fn: (options: FindOptions<any>) => void): void;
+
+  /**
+   * A hook that is run after a find (select) query
+   *
+   * @param name
+   * @param fn   A callback function that is called with instance(s), options
+   */
+  public afterFind(
+    name: string,
+    fn: (instancesOrInstance: Model[] | Model | null, options: FindOptions<any>) => void
+  ): void;
+  public afterFind(fn: (instancesOrInstance: Model[] | Model | null, options: FindOptions<any>) => void): void;
+
+  /**
+   * A hook that is run before a define call
+   *
+   * @param name
+   * @param fn   A callback function that is called with attributes, options
+   */
+  public beforeDefine(name: string, fn: (attributes: ModelAttributes<Model, any>, options: ModelOptions) => void): void;
+  public beforeDefine(fn: (attributes: ModelAttributes<Model, any>, options: ModelOptions) => void): void;
+
+  /**
+   * A hook that is run after a define call
+   *
+   * @param name
+   * @param fn   A callback function that is called with factory
+   */
+  public afterDefine(name: string, fn: (model: ModelType) => void): void;
+  public afterDefine(fn: (model: ModelType) => void): void;
+
+  /**
+   * A hook that is run before Sequelize() call
+   *
+   * @param name
+   * @param fn   A callback function that is called with config, options
+   */
+  public beforeInit(name: string, fn: (config: Config, options: Options) => void): void;
+  public beforeInit(fn: (config: Config, options: Options) => void): void;
+
+  /**
+   * A hook that is run after Sequelize() call
+   *
+   * @param name
+   * @param fn   A callback function that is called with sequelize
+   */
+  public afterInit(name: string, fn: (sequelize: Sequelize) => void): void;
+  public afterInit(fn: (sequelize: Sequelize) => void): void;
+
+  /**
+   * A hook that is run before sequelize.sync call
+   * @param fn   A callback function that is called with options passed to sequelize.sync
+   */
+  public beforeBulkSync(name: string, fn: (options: SyncOptions) => HookReturn): void;
+  public beforeBulkSync(fn: (options: SyncOptions) => HookReturn): void;
+
+  /**
+   * A hook that is run after sequelize.sync call
+   * @param fn   A callback function that is called with options passed to sequelize.sync
+   */
+  public afterBulkSync(name: string, fn: (options: SyncOptions) => HookReturn): void;
+  public afterBulkSync(fn: (options: SyncOptions) => HookReturn): void;
+
+  /**
+   * A hook that is run before Model.sync call
+   * @param fn   A callback function that is called with options passed to Model.sync
+   */
+  public beforeSync(name: string, fn: (options: SyncOptions) => HookReturn): void;
+  public beforeSync(fn: (options: SyncOptions) => HookReturn): void;
+
+  /**
+   * A hook that is run after Model.sync call
+   * @param fn   A callback function that is called with options passed to Model.sync
+   */
+  public afterSync(name: string, fn: (options: SyncOptions) => HookReturn): void;
+  public afterSync(fn: (options: SyncOptions) => HookReturn): void;
+
+  /**
    * Returns the specified dialect.
    */
   public getDialect(): string;
+
+  /**
+   * Returns the database name.
+   */
+
+  public getDatabaseName(): string;
 
   /**
    * Returns an instance of QueryInterface.
@@ -582,7 +1165,11 @@ export class Sequelize {
    * @param options  These options are merged with the default define options provided to the Sequelize
    *           constructor
    */
-  public define(modelName: string, attributes: ModelAttributes, options?: ModelOptions): typeof Model;
+  public define<M extends Model, TAttributes = M['_attributes']>(
+    modelName: string,
+    attributes: ModelAttributes<M, TAttributes>,
+    options?: ModelOptions
+  ): ModelCtor<M>;
 
   /**
    * Fetch a Model which is already defined
@@ -599,43 +1186,18 @@ export class Sequelize {
   public isDefined(modelName: string): boolean;
 
   /**
-   * Imports a model defined in another file
-   *
-   * Imported models are cached, so multiple calls to import with the same path will not load the file
-   * multiple times
-   *
-   * See https://github.com/sequelize/sequelize/blob/master/examples/using-multiple-model-files/Task.js for a
-   * short example of how to define your models in separate files so that they can be imported by
-   * sequelize.import
-   *
-   * @param path The path to the file that holds the model you want to import. If the part is relative, it
-   *   will be resolved relatively to the calling file
-   *
-   * @param defineFunction An optional function that provides model definitions. Useful if you do not
-   *   want to use the module root as the define function
-   */
-  public import<T extends typeof Model>(
-    path: string,
-    defineFunction?: (sequelize: Sequelize, dataTypes: typeof DataTypes) => T
-  ): T;
-
-  /**
    * Execute a query on the DB, optionally bypassing all the Sequelize goodness.
    *
    * By default, the function will return two arguments: an array of results, and a metadata object,
-   * containing number of affected rows etc. Use `.then(([...]))` to access the results.
+   * containing number of affected rows etc. Use `const [results, meta] = await ...` to access the results.
    *
    * If you are running a type of query where you don't need the metadata, for example a `SELECT` query, you
    * can pass in a query type to make sequelize format the results:
    *
    * ```js
-   * sequelize.query('SELECT...').then(([results, metadata]) {
-   *   // Raw query - use spread
-   * });
+   * const [results, metadata] = await sequelize.query('SELECT...'); // Raw query - use array destructuring
    *
-   * sequelize.query('SELECT...', { type: sequelize.QueryTypes.SELECT }).then(results => {
-   *   // SELECT query - use then
-   * })
+   * const results = await sequelize.query('SELECT...', { type: sequelize.QueryTypes.SELECT }); // SELECT query - no destructuring
    * ```
    *
    * @param sql
@@ -648,21 +1210,14 @@ export class Sequelize {
   public query(sql: string | { query: string; values: unknown[] }, options: QueryOptionsWithType<QueryTypes.DELETE>): Promise<void>;
   public query(sql: string | { query: string; values: unknown[] }, options: QueryOptionsWithType<QueryTypes.BULKDELETE>): Promise<number>;
   public query(sql: string | { query: string; values: unknown[] }, options: QueryOptionsWithType<QueryTypes.SHOWTABLES>): Promise<string[]>;
-  public query(sql: string | { query: string; values: unknown[] }, options: QueryOptionsWithType<QueryTypes.DESCRIBE>): Promise<{
-    [key: string]: {
-      type: string;
-      allowNull: boolean;
-      defaultValue: string;
-      primaryKey: boolean;
-      autoIncrement: boolean;
-      comment: string | null;
-    }
-  }>;
+  public query(sql: string | { query: string; values: unknown[] }, options: QueryOptionsWithType<QueryTypes.DESCRIBE>): Promise<ColumnsDescription>;
   public query<M extends Model>(
     sql: string | { query: string; values: unknown[] },
-    options: QueryOptionsWithModel
+    options: QueryOptionsWithModel<M>
   ): Promise<M[]>;
+  public query<T extends object>(sql: string | { query: string; values: unknown[] }, options: QueryOptionsWithType<QueryTypes.SELECT> & { plain: true }): Promise<T>;
   public query<T extends object>(sql: string | { query: string; values: unknown[] }, options: QueryOptionsWithType<QueryTypes.SELECT>): Promise<T[]>;
+  public query(sql: string | { query: string; values: unknown[] }, options: (QueryOptions | QueryOptionsWithType<QueryTypes.RAW>) & { plain: true }): Promise<{ [key: string]: unknown }>;
   public query(sql: string | { query: string; values: unknown[] }, options?: QueryOptions | QueryOptionsWithType<QueryTypes.RAW>): Promise<[unknown[], unknown]>;
 
   /**
@@ -747,7 +1302,7 @@ export class Sequelize {
    *
    * @param [options] The options passed to Model.destroy in addition to truncate
    */
-  public truncate(options?: DestroyOptions): Promise<unknown[]>;
+  public truncate(options?: DestroyOptions<any>): Promise<unknown[]>;
 
   /**
    * Drop all tables defined through this sequelize instance. This is done by calling Model.drop on each model
@@ -769,12 +1324,14 @@ export class Sequelize {
    * in order for the query to happen under that transaction
    *
    * ```js
-   * sequelize.transaction().then(t => {
-   *   return User.findOne(..., { transaction: t}).then(user => {
-   *   return user.update(..., { transaction: t});
-   *   })
-   *   .then(t.commit.bind(t))
-   *   .catch(t.rollback.bind(t));
+   *   try {
+   *     const transaction = await sequelize.transaction();
+   *     const user = await User.findOne(..., { transaction });
+   *     await user.update(..., { transaction });
+   *     await transaction.commit();
+   *   } catch(err) {
+   *     await transaction.rollback();
+   *   }
    * })
    * ```
    *
@@ -782,17 +1339,29 @@ export class Sequelize {
    * supported:
    *
    * ```js
-   * sequelize.transaction(t => { // Note that we use a callback rather than a promise.then()
-   *   return User.findOne(..., { transaction: t}).then(user => {
-   *    return user.update(..., { transaction: t});
+   * try {
+   *   await sequelize.transaction(transaction => { // Note that we pass a callback rather than awaiting the call with no arguments
+   *     const user = await User.findOne(..., {transaction});
+   *     await user.update(..., {transaction});
    *   });
-   * }).then(() => {
-   *   // Commited
-   * }).catch(err => {
+   *   // Committed
+   * } catch(err) {
    *   // Rolled back
    *   console.error(err);
-   * });
+   * }
    * ```
+   *
+   * If you have [CLS](https://github.com/Jeff-Lewis/cls-hooked) enabled, the transaction
+   * will automatically be passed to any query that runs witin the callback. To enable CLS, add it do your
+   * project, create a namespace and set it on the sequelize constructor:
+   *
+   * ```js
+   * const cls = require('cls-hooked');
+   * const namespace = cls.createNamespace('....');
+   * const Sequelize = require('sequelize');
+   * Sequelize.useCLS(namespace);
+   * ```
+   * Note, that CLS is enabled for all sequelize instances, and all instances will share the same namespace
    *
    * @param options Transaction Options
    * @param autoCallback Callback for the transaction
@@ -863,14 +1432,14 @@ export function literal(val: string): Literal;
  *
  * @param args Each argument will be joined by AND
  */
-export function and(...args: (WhereOperators | WhereAttributeHash | Where)[]): AndOperator;
+export function and(...args: (WhereOperators | WhereAttributeHash<any> | Where)[]): AndOperator<any>;
 
 /**
  * An OR query
  *
  * @param args Each argument will be joined by OR
  */
-export function or(...args: (WhereOperators | WhereAttributeHash | Where)[]): OrOperator;
+export function or(...args: (WhereOperators | WhereAttributeHash<any> | Where)[]): OrOperator<any>;
 
 /**
  * Creates an object representing nested where conditions for postgres's json data-type.
@@ -883,7 +1452,7 @@ export function or(...args: (WhereOperators | WhereAttributeHash | Where)[]): Or
 export function json(conditionsOrPath: string | object, value?: string | number | boolean): Json;
 
 export type AttributeType = Fn | Col | Literal | ModelAttributeColumnOptions | string;
-export type LogicType = Fn | Col | Literal | OrOperator | AndOperator | WhereOperators | string;
+export type LogicType = Fn | Col | Literal | OrOperator<any> | AndOperator<any> | WhereOperators | string | symbol | null;
 
 /**
  * A way of specifying attr = condition.
@@ -903,7 +1472,7 @@ export type LogicType = Fn | Col | Literal | OrOperator | AndOperator | WhereOpe
  * @param logic The condition. Can be both a simply type, or a further condition (`.or`, `.and`, `.literal`
  *   etc.)
  */
-export function where(attr: AttributeType, comparator: string, logic: LogicType): Where;
+export function where(attr: AttributeType, comparator: string | symbol, logic: LogicType): Where;
 export function where(attr: AttributeType, logic: LogicType): Where;
 
 export default Sequelize;

@@ -8,7 +8,7 @@ const Support = require('../support'),
   expect = chai.expect,
   expectsql = Support.expectsql,
   current = Support.sequelize,
-  sql = current.dialect.QueryGenerator,
+  sql = current.dialect.queryGenerator,
   Op = Support.Sequelize.Op;
 
 // Notice: [] will be replaced by dialect specific tick/quote character when there is not dialect specific expectation but only a default expectation
@@ -158,7 +158,6 @@ describe(Support.getTestDialectTeaser('SQL'), () => {
           ].join(current.dialect.supports['UNION ALL'] ? ' UNION ALL ' : ' UNION ')
         }) AS [user] ORDER BY [subquery_order_0] ASC;`
       });
-
 
       testsql({
         table: User.getTableName(),
@@ -374,7 +373,82 @@ describe(Support.getTestDialectTeaser('SQL'), () => {
       });
     });
 
-    it('include (subQuery alias)', () => {
+    it('include (right outer join)', () => {
+      const User = Support.sequelize.define('User', {
+        name: DataTypes.STRING,
+        age: DataTypes.INTEGER
+      },
+      {
+        freezeTableName: true
+      });
+      const Post = Support.sequelize.define('Post', {
+        title: DataTypes.STRING
+      },
+      {
+        freezeTableName: true
+      });
+
+      User.Posts = User.hasMany(Post, { foreignKey: 'user_id' });
+
+      expectsql(sql.selectQuery('User', {
+        attributes: ['name', 'age'],
+        include: Model._validateIncludedElements({
+          include: [{
+            attributes: ['title'],
+            association: User.Posts,
+            right: true
+          }],
+          model: User
+        }).include,
+        model: User
+      }, User), {
+        default: `SELECT [User].[name], [User].[age], [Posts].[id] AS [Posts.id], [Posts].[title] AS [Posts.title] FROM [User] AS [User] ${current.dialect.supports['RIGHT JOIN'] ? 'RIGHT' : 'LEFT'} OUTER JOIN [Post] AS [Posts] ON [User].[id] = [Posts].[user_id];`
+      });
+    });
+
+    it('include through (right outer join)', () => {
+      const User = Support.sequelize.define('user', {
+        id: {
+          type: DataTypes.INTEGER,
+          primaryKey: true,
+          autoIncrement: true,
+          field: 'id_user'
+        }
+      });
+      const Project = Support.sequelize.define('project', {
+        title: DataTypes.STRING
+      });
+
+      const ProjectUser = Support.sequelize.define('project_user', {
+        userId: {
+          type: DataTypes.INTEGER,
+          field: 'user_id'
+        },
+        projectId: {
+          type: DataTypes.INTEGER,
+          field: 'project_id'
+        }
+      }, { timestamps: false });
+
+      User.Projects = User.belongsToMany(Project, { through: ProjectUser });
+      Project.belongsToMany(User, { through: ProjectUser });
+
+      expectsql(sql.selectQuery('User', {
+        attributes: ['id_user', 'id'],
+        include: Model._validateIncludedElements({
+          include: [{
+            model: Project,
+            right: true
+          }],
+          model: User
+        }).include,
+        model: User
+      }, User), {
+        default: `SELECT [user].[id_user], [user].[id], [projects].[id] AS [projects.id], [projects].[title] AS [projects.title], [projects].[createdAt] AS [projects.createdAt], [projects].[updatedAt] AS [projects.updatedAt], [projects->project_user].[user_id] AS [projects.project_user.userId], [projects->project_user].[project_id] AS [projects.project_user.projectId] FROM [User] AS [user] ${current.dialect.supports['RIGHT JOIN'] ? 'RIGHT' : 'LEFT'} OUTER JOIN ( [project_users] AS [projects->project_user] INNER JOIN [projects] AS [projects] ON [projects].[id] = [projects->project_user].[project_id]) ON [user].[id_user] = [projects->project_user].[user_id];`
+      });
+    });
+
+    describe('include (subQuery alias)', () => {
       const User = Support.sequelize.define('User', {
         name: DataTypes.STRING,
         age: DataTypes.INTEGER
@@ -391,29 +465,107 @@ describe(Support.getTestDialectTeaser('SQL'), () => {
 
       User.Posts = User.hasMany(Post, { foreignKey: 'user_id', as: 'postaliasname' });
 
-      expectsql(sql.selectQuery('User', {
-        table: User.getTableName(),
-        model: User,
-        attributes: ['name', 'age'],
+      it('w/o filters', () => {
+        expectsql(sql.selectQuery('User', {
+          table: User.getTableName(),
+          model: User,
+          attributes: ['name', 'age'],
+          include: Model._validateIncludedElements({
+            include: [{
+              attributes: ['title'],
+              association: User.Posts,
+              subQuery: true,
+              required: true
+            }],
+            as: 'User'
+          }).include,
+          subQuery: true
+        }, User), {
+          default: 'SELECT [User].* FROM ' +
+            '(SELECT [User].[name], [User].[age], [User].[id] AS [id], [postaliasname].[id] AS [postaliasname.id], [postaliasname].[title] AS [postaliasname.title] FROM [User] AS [User] ' +
+            'INNER JOIN [Post] AS [postaliasname] ON [User].[id] = [postaliasname].[user_id] ' +
+            `WHERE ( SELECT [user_id] FROM [Post] AS [postaliasname] WHERE ([postaliasname].[user_id] = [User].[id])${sql.addLimitAndOffset({ limit: 1, tableAs: 'postaliasname' }, User)} ) IS NOT NULL) AS [User];`
+        });
+      });
+
+      it('w/ nested column filter', () => {
+        expectsql(sql.selectQuery('User', {
+          table: User.getTableName(),
+          model: User,
+          attributes: ['name', 'age'],
+          where: { '$postaliasname.title$': 'test' },
+          include: Model._validateIncludedElements({
+            include: [{
+              attributes: ['title'],
+              association: User.Posts,
+              subQuery: true,
+              required: true
+            }],
+            as: 'User'
+          }).include,
+          subQuery: true
+        }, User), {
+          default: 'SELECT [User].* FROM ' +
+            '(SELECT [User].[name], [User].[age], [User].[id] AS [id], [postaliasname].[id] AS [postaliasname.id], [postaliasname].[title] AS [postaliasname.title] FROM [User] AS [User] ' +
+            'INNER JOIN [Post] AS [postaliasname] ON [User].[id] = [postaliasname].[user_id] ' +
+            `WHERE [postaliasname].[title] = ${sql.escape('test')} AND ( SELECT [user_id] FROM [Post] AS [postaliasname] WHERE ([postaliasname].[user_id] = [User].[id])${sql.addLimitAndOffset({ limit: 1, tableAs: 'postaliasname' }, User)} ) IS NOT NULL) AS [User];`
+        });
+      });
+    });
+
+    it('include w/ subQuery + nested filter + paging', () => {
+      const User = Support.sequelize.define('User', {
+        scopeId: DataTypes.INTEGER
+      });
+
+      const Company = Support.sequelize.define('Company', {
+        name: DataTypes.STRING,
+        public: DataTypes.BOOLEAN,
+        scopeId: DataTypes.INTEGER
+      });
+
+      const Profession = Support.sequelize.define('Profession', {
+        name: DataTypes.STRING,
+        scopeId: DataTypes.INTEGER
+      });
+
+      User.Company = User.belongsTo(Company, { foreignKey: 'companyId' });
+      User.Profession = User.belongsTo(Profession, { foreignKey: 'professionId' });
+      Company.Users = Company.hasMany(User, { as: 'Users', foreignKey: 'companyId' });
+      Profession.Users = Profession.hasMany(User, { as: 'Users', foreignKey: 'professionId' });
+
+      expectsql(sql.selectQuery('Company', {
+        table: Company.getTableName(),
+        model: Company,
+        attributes: ['name', 'public'],
+        where: { '$Users.Profession.name$': 'test', [Op.and]: { scopeId: [42] } },
         include: Model._validateIncludedElements({
           include: [{
-            attributes: ['title'],
-            association: User.Posts,
+            association: Company.Users,
+            attributes: [],
+            include: [{
+              association: User.Profession,
+              attributes: [],
+              required: true
+            }],
             subQuery: true,
             required: true
           }],
-          as: 'User'
+          model: Company
         }).include,
+        limit: 5,
+        offset: 0,
         subQuery: true
-      }, User), {
-        default: 'SELECT [User].*, [postaliasname].[id] AS [postaliasname.id], [postaliasname].[title] AS [postaliasname.title] FROM ' +
-          '(SELECT [User].[name], [User].[age], [User].[id] AS [id] FROM [User] AS [User] ' +
-          'WHERE ( SELECT [user_id] FROM [Post] AS [postaliasname] WHERE ([postaliasname].[user_id] = [User].[id]) LIMIT 1 ) IS NOT NULL) AS [User] ' +
-          'INNER JOIN [Post] AS [postaliasname] ON [User].[id] = [postaliasname].[user_id];',
-        mssql: 'SELECT [User].*, [postaliasname].[id] AS [postaliasname.id], [postaliasname].[title] AS [postaliasname.title] FROM ' +
-          '(SELECT [User].[name], [User].[age], [User].[id] AS [id] FROM [User] AS [User] ' +
-          'WHERE ( SELECT [user_id] FROM [Post] AS [postaliasname] WHERE ([postaliasname].[user_id] = [User].[id]) ORDER BY [postaliasname].[id] OFFSET 0 ROWS FETCH NEXT 1 ROWS ONLY ) IS NOT NULL) AS [User] ' +
-          'INNER JOIN [Post] AS [postaliasname] ON [User].[id] = [postaliasname].[user_id];'
+      }, Company), {
+        default: 'SELECT [Company].* FROM (' +
+        'SELECT [Company].[name], [Company].[public], [Company].[id] AS [id] FROM [Company] AS [Company] ' +
+        'INNER JOIN [Users] AS [Users] ON [Company].[id] = [Users].[companyId] ' +
+        'INNER JOIN [Professions] AS [Users->Profession] ON [Users].[professionId] = [Users->Profession].[id] ' +
+        `WHERE ([Company].[scopeId] IN (42)) AND [Users->Profession].[name] = ${sql.escape('test')} AND ( ` +
+        'SELECT [Users].[companyId] FROM [Users] AS [Users] ' +
+        'INNER JOIN [Professions] AS [Profession] ON [Users].[professionId] = [Profession].[id] ' +
+        `WHERE ([Users].[companyId] = [Company].[id])${sql.addLimitAndOffset({ limit: 1, tableAs: 'Users' }, User)} ` +
+        `) IS NOT NULL${sql.addLimitAndOffset({ limit: 5, offset: 0, tableAs: 'Company' }, Company)}) AS [Company];`
       });
     });
 
@@ -671,6 +823,42 @@ describe(Support.getTestDialectTeaser('SQL'), () => {
       }, User), {
         default: 'SELECT [User].[name], [User].[age], [Posts].[id] AS [Posts.id], [Posts].[title] AS [Posts.title], [Posts->Comments].[id] AS [Posts.Comments.id], [Posts->Comments].[title] AS [Posts.Comments.title], [Posts->Comments].[createdAt] AS [Posts.Comments.createdAt], [Posts->Comments].[updatedAt] AS [Posts.Comments.updatedAt], [Posts->Comments].[post_id] AS [Posts.Comments.post_id] FROM [User] AS [User] LEFT OUTER JOIN [Post] AS [Posts] ON [User].[id] = [Posts].[user_id] LEFT OUTER JOIN [Comment] AS [Posts->Comments] ON [Posts].[id] = [Posts->Comments].[post_id];',
         postgres: 'SELECT "User".name, "User".age, Posts.id AS "Posts.id", Posts.title AS "Posts.title", "Posts->Comments".id AS "Posts.Comments.id", "Posts->Comments".title AS "Posts.Comments.title", "Posts->Comments".createdAt AS "Posts.Comments.createdAt", "Posts->Comments".updatedAt AS "Posts.Comments.updatedAt", "Posts->Comments".post_id AS "Posts.Comments.post_id" FROM "User" AS "User" LEFT OUTER JOIN Post AS Posts ON "User".id = Posts.user_id LEFT OUTER JOIN Comment AS "Posts->Comments" ON Posts.id = "Posts->Comments".post_id;'
+      });
+    });
+
+    it('attributes with dot notation', () => {
+      const User = Support.sequelize.define('User', {
+        name: DataTypes.STRING,
+        age: DataTypes.INTEGER,
+        'status.label': DataTypes.STRING
+      },
+      {
+        freezeTableName: true
+      });
+      const Post = Support.sequelize.define('Post', {
+        title: DataTypes.STRING,
+        'status.label': DataTypes.STRING
+      },
+      {
+        freezeTableName: true
+      });
+
+      User.Posts = User.hasMany(Post, { foreignKey: 'user_id' });
+
+      expectsql(sql.selectQuery('User', {
+        attributes: ['name', 'age', 'status.label'],
+        include: Model._validateIncludedElements({
+          include: [{
+            attributes: ['title', 'status.label'],
+            association: User.Posts
+          }],
+          model: User
+        }).include,
+        model: User,
+        dotNotation: true
+      }, User), {
+        default: 'SELECT [User].[name], [User].[age], [User].[status.label], [Posts].[id] AS [Posts.id], [Posts].[title] AS [Posts.title], [Posts].[status.label] AS [Posts.status.label] FROM [User] AS [User] LEFT OUTER JOIN [Post] AS [Posts] ON [User].[id] = [Posts].[user_id];',
+        postgres: 'SELECT "User".name, "User".age, "User"."status.label", Posts.id AS "Posts.id", Posts.title AS "Posts.title", Posts."status.label" AS "Posts.status.label" FROM "User" AS "User" LEFT OUTER JOIN Post AS Posts ON "User".id = Posts.user_id;'
       });
     });
 

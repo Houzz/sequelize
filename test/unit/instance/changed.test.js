@@ -18,7 +18,7 @@ describe(Support.getTestDialectTeaser('Instance'), () => {
     });
 
     it('should return true for changed primitive', function() {
-      const user = new this.User({
+      const user = this.User.build({
         name: 'a'
       }, {
         isNewRecord: false,
@@ -33,7 +33,7 @@ describe(Support.getTestDialectTeaser('Instance'), () => {
     });
 
     it('should return falsy for unchanged primitive', function() {
-      const user = new this.User({
+      const user = this.User.build({
         name: 'a',
         meta: null
       }, {
@@ -48,7 +48,7 @@ describe(Support.getTestDialectTeaser('Instance'), () => {
     });
 
     it('should return true for multiple changed values', function() {
-      const user = new this.User({
+      const user = this.User.build({
         name: 'a',
         birthday: new Date(new Date() - 10)
       }, {
@@ -67,7 +67,7 @@ describe(Support.getTestDialectTeaser('Instance'), () => {
       const firstDate = new Date(milliseconds);
       const secondDate = new Date(milliseconds);
 
-      const user = new this.User({
+      const user = this.User.build({
         birthday: firstDate
       }, {
         isNewRecord: false,
@@ -78,25 +78,22 @@ describe(Support.getTestDialectTeaser('Instance'), () => {
       expect(user.changed('birthday')).to.equal(false);
     });
 
-    it('should return true for changed JSON with same object', function() {
-      const user = new this.User({
-        meta: {
-          city: 'Copenhagen'
-        }
-      }, {
-        isNewRecord: false,
-        raw: true
-      });
-
-      const meta = user.get('meta');
-      meta.city = 'Stockholm';
-
-      user.set('meta', meta);
-      expect(user.changed('meta')).to.equal(true);
+    it('should not detect changes when equal', function() {
+      for (const value of [null, 1, 'asdf', new Date(), [], {}, Buffer.from('')]) {
+        const t = new this.User({
+          json: value
+        }, {
+          isNewRecord: false,
+          raw: true
+        });
+        t.json = value;
+        expect(t.changed('json')).to.be.false;
+        expect(t.changed()).to.be.false;
+      }
     });
 
     it('should return true for JSON dot.separated key with changed values', function() {
-      const user = new this.User({
+      const user = this.User.build({
         meta: {
           city: 'Stockholm'
         }
@@ -110,7 +107,7 @@ describe(Support.getTestDialectTeaser('Instance'), () => {
     });
 
     it('should return false for JSON dot.separated key with same value', function() {
-      const user = new this.User({
+      const user = this.User.build({
         meta: {
           city: 'Gothenburg'
         }
@@ -124,7 +121,7 @@ describe(Support.getTestDialectTeaser('Instance'), () => {
     });
 
     it('should return true for JSON dot.separated key with object', function() {
-      const user = new this.User({
+      const user = this.User.build({
         meta: {
           address: { street: 'Main street', number: '40' }
         }
@@ -138,7 +135,7 @@ describe(Support.getTestDialectTeaser('Instance'), () => {
     });
 
     it('should return false for JSON dot.separated key with same object', function() {
-      const user = new this.User({
+      const user = this.User.build({
         meta: {
           address: { street: 'Main street', number: '40' }
         }
@@ -157,7 +154,7 @@ describe(Support.getTestDialectTeaser('Instance'), () => {
         attributes[attr] = null;
       }
 
-      const user = new this.User(attributes, {
+      const user = this.User.build(attributes, {
         isNewRecord: false,
         raw: true
       });
@@ -173,7 +170,7 @@ describe(Support.getTestDialectTeaser('Instance'), () => {
 
     describe('setDataValue', () => {
       it('should return falsy for unchanged primitive', function() {
-        const user = new this.User({
+        const user = this.User.build({
           name: 'a',
           meta: null
         }, {

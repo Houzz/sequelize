@@ -3,8 +3,6 @@
 const chai = require('chai'),
   sinon = require('sinon'),
   expect = chai.expect,
-  Sequelize = require('../../index'),
-  Promise = Sequelize.Promise,
   Support = require('./support'),
   _ = require('lodash'),
   current = Support.sequelize;
@@ -15,21 +13,20 @@ describe(Support.getTestDialectTeaser('Hooks'), () => {
   });
 
   it('does not expose non-model hooks', function() {
-    for (const badHook of ['beforeDefine', 'afterDefine', 'beforeConnect', 'afterConnect', 'beforeDisconnect', 'afterDisconnect', 'beforeInit', 'afterInit', 'beforeBulkSync', 'afterBulkSync']) {
-      expect(() => this.Model.hooks.add(badHook, () => {})).to.throw(/is only applicable/);
+    for (const badHook of ['beforeDefine', 'afterDefine', 'beforeConnect', 'afterConnect', 'beforeDisconnect', 'afterDisconnect', 'beforeInit', 'afterInit']) {
+      expect(this.Model).to.not.have.property(badHook);
     }
   });
 
   describe('arguments', () => {
-    it('hooks can modify passed arguments', function() {
-      this.Model.hooks.add('beforeCreate', options => {
+    it('hooks can modify passed arguments', async function() {
+      this.Model.addHook('beforeCreate', options => {
         options.answer = 41;
       });
 
       const options = {};
-      return this.Model.hooks.run('beforeCreate', options).then(() => {
-        expect(options.answer).to.equal(41);
-      });
+      await this.Model.runHooks('beforeCreate', options);
+      expect(options.answer).to.equal(41);
     });
   });
 
@@ -62,16 +59,15 @@ describe(Support.getTestDialectTeaser('Hooks'), () => {
         });
       });
 
-      it('calls beforeSave/afterSave', function() {
-        return this.Model.create({}).then(() => {
-          expect(this.afterCreateHook).to.have.been.calledOnce;
-          expect(this.beforeSaveHook).to.have.been.calledOnce;
-          expect(this.afterSaveHook).to.have.been.calledOnce;
-        });
+      it('calls beforeSave/afterSave', async function() {
+        await this.Model.create({});
+        expect(this.afterCreateHook).to.have.been.calledOnce;
+        expect(this.beforeSaveHook).to.have.been.calledOnce;
+        expect(this.afterSaveHook).to.have.been.calledOnce;
       });
     });
 
-    describe('defined by hooks.add method', () => {
+    describe('defined by addHook method', () => {
       beforeEach(function() {
         this.beforeSaveHook = sinon.spy();
         this.afterSaveHook = sinon.spy();
@@ -80,15 +76,14 @@ describe(Support.getTestDialectTeaser('Hooks'), () => {
           name: Support.Sequelize.STRING
         });
 
-        this.Model.hooks.add('beforeSave', this.beforeSaveHook);
-        this.Model.hooks.add('afterSave', this.afterSaveHook);
+        this.Model.addHook('beforeSave', this.beforeSaveHook);
+        this.Model.addHook('afterSave', this.afterSaveHook);
       });
 
-      it('calls beforeSave/afterSave', function() {
-        return this.Model.create({}).then(() => {
-          expect(this.beforeSaveHook).to.have.been.calledOnce;
-          expect(this.afterSaveHook).to.have.been.calledOnce;
-        });
+      it('calls beforeSave/afterSave', async function() {
+        await this.Model.create({});
+        expect(this.beforeSaveHook).to.have.been.calledOnce;
+        expect(this.afterSaveHook).to.have.been.calledOnce;
       });
     });
 
@@ -101,15 +96,14 @@ describe(Support.getTestDialectTeaser('Hooks'), () => {
           name: Support.Sequelize.STRING
         });
 
-        this.Model.hooks.add('beforeSave', this.beforeSaveHook);
-        this.Model.hooks.add('afterSave', this.afterSaveHook);
+        this.Model.addHook('beforeSave', this.beforeSaveHook);
+        this.Model.addHook('afterSave', this.afterSaveHook);
       });
 
-      it('calls beforeSave/afterSave', function() {
-        return this.Model.create({}).then(() => {
-          expect(this.beforeSaveHook).to.have.been.calledOnce;
-          expect(this.afterSaveHook).to.have.been.calledOnce;
-        });
+      it('calls beforeSave/afterSave', async function() {
+        await this.Model.create({});
+        expect(this.beforeSaveHook).to.have.been.calledOnce;
+        expect(this.afterSaveHook).to.have.been.calledOnce;
       });
     });
   });
@@ -128,83 +122,88 @@ describe(Support.getTestDialectTeaser('Hooks'), () => {
         expect(this.hook3).to.have.been.calledOnce;
       });
 
-      it('using hooks.add', function() {
-        this.Model.hooks.add('beforeCreate', this.hook1);
-        this.Model.hooks.add('beforeCreate', this.hook2);
-        this.Model.hooks.add('beforeCreate', this.hook3);
+      it('using addHook', async function() {
+        this.Model.addHook('beforeCreate', this.hook1);
+        this.Model.addHook('beforeCreate', this.hook2);
+        this.Model.addHook('beforeCreate', this.hook3);
 
-        return this.Model.hooks.run('beforeCreate');
+        await this.Model.runHooks('beforeCreate');
       });
 
-      it('using define', function() {
-        return current.define('M', {}, {
+      it('using function', async function() {
+        this.Model.beforeCreate(this.hook1);
+        this.Model.beforeCreate(this.hook2);
+        this.Model.beforeCreate(this.hook3);
+
+        await this.Model.runHooks('beforeCreate');
+      });
+
+      it('using define', async function() {
+        await current.define('M', {}, {
           hooks: {
             beforeCreate: [this.hook1, this.hook2, this.hook3]
           }
-        }).hooks.run('beforeCreate');
+        }).runHooks('beforeCreate');
       });
 
-      it('using a mixture', function() {
+      it('using a mixture', async function() {
         const Model = current.define('M', {}, {
           hooks: {
             beforeCreate: this.hook1
           }
         });
-        Model.hooks.add('beforeCreate', this.hook2);
-        Model.hooks.add('beforeCreate', this.hook3);
+        Model.beforeCreate(this.hook2);
+        Model.addHook('beforeCreate', this.hook3);
 
-        return Model.hooks.run('beforeCreate');
+        await Model.runHooks('beforeCreate');
       });
     });
 
-    it('stops execution when a hook throws', function() {
-      this.Model.hooks.add('beforeCreate', () => {
+    it('stops execution when a hook throws', async function() {
+      this.Model.beforeCreate(() => {
         this.hook1();
 
         throw new Error('No!');
       });
-      this.Model.hooks.add('beforeCreate', this.hook2);
+      this.Model.beforeCreate(this.hook2);
 
-      return expect(this.Model.hooks.run('beforeCreate')).to.be.rejected.then(() => {
-        expect(this.hook1).to.have.been.calledOnce;
-        expect(this.hook2).not.to.have.been.called;
-      });
+      await expect(this.Model.runHooks('beforeCreate')).to.be.rejected;
+      expect(this.hook1).to.have.been.calledOnce;
+      expect(this.hook2).not.to.have.been.called;
     });
 
-    it('stops execution when a hook rejects', function() {
-      this.Model.hooks.add('beforeCreate', () => {
+    it('stops execution when a hook rejects', async function() {
+      this.Model.beforeCreate(async () => {
         this.hook1();
 
-        return Promise.reject(new Error('No!'));
+        throw new Error('No!');
       });
-      this.Model.hooks.add('beforeCreate', this.hook2);
+      this.Model.beforeCreate(this.hook2);
 
-      return expect(this.Model.hooks.run('beforeCreate')).to.be.rejected.then(() => {
-        expect(this.hook1).to.have.been.calledOnce;
-        expect(this.hook2).not.to.have.been.called;
-      });
+      await expect(this.Model.runHooks('beforeCreate')).to.be.rejected;
+      expect(this.hook1).to.have.been.calledOnce;
+      expect(this.hook2).not.to.have.been.called;
     });
   });
 
   describe('global hooks', () => {
-    describe('using hooks.add', () => {
+    describe('using addHook', () => {
 
-      it('invokes the global hook', function() {
+      it('invokes the global hook', async function() {
         const globalHook = sinon.spy();
 
-        current.hooks.add('beforeUpdate', globalHook);
+        current.addHook('beforeUpdate', globalHook);
 
-        return this.Model.hooks.run('beforeUpdate').then(() => {
-          expect(globalHook).to.have.been.calledOnce;
-        });
+        await this.Model.runHooks('beforeUpdate');
+        expect(globalHook).to.have.been.calledOnce;
       });
 
-      it('invokes the global hook, when the model also has a hook', () => {
+      it('invokes the global hook, when the model also has a hook', async () => {
         const globalHookBefore = sinon.spy(),
           globalHookAfter = sinon.spy(),
           localHook = sinon.spy();
 
-        current.hooks.add('beforeUpdate', globalHookBefore);
+        current.addHook('beforeUpdate', globalHookBefore);
 
         const Model = current.define('m', {}, {
           hooks: {
@@ -212,16 +211,15 @@ describe(Support.getTestDialectTeaser('Hooks'), () => {
           }
         });
 
-        current.hooks.add('beforeUpdate', globalHookAfter);
+        current.addHook('beforeUpdate', globalHookAfter);
 
-        return Model.hooks.run('beforeUpdate').then(() => {
-          expect(globalHookBefore).to.have.been.calledOnce;
-          expect(globalHookAfter).to.have.been.calledOnce;
-          expect(localHook).to.have.been.calledOnce;
+        await Model.runHooks('beforeUpdate');
+        expect(globalHookBefore).to.have.been.calledOnce;
+        expect(globalHookAfter).to.have.been.calledOnce;
+        expect(localHook).to.have.been.calledOnce;
 
-          expect(localHook).to.have.been.calledBefore(globalHookBefore);
-          expect(localHook).to.have.been.calledBefore(globalHookAfter);
-        });
+        expect(localHook).to.have.been.calledBefore(globalHookBefore);
+        expect(localHook).to.have.been.calledBefore(globalHookAfter);
       });
     });
 
@@ -237,19 +235,18 @@ describe(Support.getTestDialectTeaser('Hooks'), () => {
         });
       });
 
-      it('runs the global hook when no hook is passed', function() {
+      it('runs the global hook when no hook is passed', async function() {
         const Model = this.sequelize.define('M', {}, {
           hooks: {
             beforeUpdate: _.noop // Just to make sure we can define other hooks without overwriting the global one
           }
         });
 
-        return Model.hooks.run('beforeCreate').then(() => {
-          expect(this.beforeCreate).to.have.been.calledOnce;
-        });
+        await Model.runHooks('beforeCreate');
+        expect(this.beforeCreate).to.have.been.calledOnce;
       });
 
-      it('does not run the global hook when the model specifies its own hook', function() {
+      it('does not run the global hook when the model specifies its own hook', async function() {
         const localHook = sinon.spy(),
           Model = this.sequelize.define('M', {}, {
             hooks: {
@@ -257,71 +254,70 @@ describe(Support.getTestDialectTeaser('Hooks'), () => {
             }
           });
 
-        return Model.hooks.run('beforeCreate').then(() => {
-          expect(this.beforeCreate).not.to.have.been.called;
-          expect(localHook).to.have.been.calledOnce;
-        });
+        await Model.runHooks('beforeCreate');
+        expect(this.beforeCreate).not.to.have.been.called;
+        expect(localHook).to.have.been.calledOnce;
       });
     });
   });
 
   describe('#removeHook', () => {
-    it('should remove hook', function() {
+    it('should remove hook', async function() {
       const hook1 = sinon.spy(),
         hook2 = sinon.spy();
 
-      this.Model.hooks.add('beforeCreate', hook1);
+      this.Model.addHook('beforeCreate', 'myHook', hook1);
+      this.Model.beforeCreate('myHook2', hook2);
 
-      return this.Model.hooks.run('beforeCreate').then(() => {
-        expect(hook1).to.have.been.calledOnce;
+      await this.Model.runHooks('beforeCreate');
+      expect(hook1).to.have.been.calledOnce;
+      expect(hook2).to.have.been.calledOnce;
 
-        hook1.resetHistory();
+      hook1.resetHistory();
+      hook2.resetHistory();
 
-        this.Model.hooks.remove('beforeCreate', hook1);
+      this.Model.removeHook('beforeCreate', 'myHook');
+      this.Model.removeHook('beforeCreate', 'myHook2');
 
-        return this.Model.hooks.run('beforeCreate');
-      }).then(() => {
-        expect(hook1).not.to.have.been.called;
-        expect(hook2).not.to.have.been.called;
-      });
+      await this.Model.runHooks('beforeCreate');
+      expect(hook1).not.to.have.been.called;
+      expect(hook2).not.to.have.been.called;
     });
 
-    it('should not remove other hooks', function() {
+    it('should not remove other hooks', async function() {
       const hook1 = sinon.spy(),
         hook2 = sinon.spy(),
         hook3 = sinon.spy(),
         hook4 = sinon.spy();
 
-      this.Model.hooks.add('beforeCreate', hook1);
-      this.Model.hooks.add('beforeCreate', hook2);
-      this.Model.hooks.add('beforeCreate', hook3);
-      this.Model.hooks.add('beforeCreate', hook4);
+      this.Model.addHook('beforeCreate', hook1);
+      this.Model.addHook('beforeCreate', 'myHook', hook2);
+      this.Model.beforeCreate('myHook2', hook3);
+      this.Model.beforeCreate(hook4);
 
-      return this.Model.hooks.run('beforeCreate').then(() => {
-        expect(hook1).to.have.been.calledOnce;
-        expect(hook2).to.have.been.calledOnce;
-        expect(hook3).to.have.been.calledOnce;
-        expect(hook4).to.have.been.calledOnce;
+      await this.Model.runHooks('beforeCreate');
+      expect(hook1).to.have.been.calledOnce;
+      expect(hook2).to.have.been.calledOnce;
+      expect(hook3).to.have.been.calledOnce;
+      expect(hook4).to.have.been.calledOnce;
 
-        hook1.resetHistory();
-        hook2.resetHistory();
-        hook3.resetHistory();
-        hook4.resetHistory();
+      hook1.resetHistory();
+      hook2.resetHistory();
+      hook3.resetHistory();
+      hook4.resetHistory();
 
-        this.Model.hooks.remove('beforeCreate', hook2);
+      this.Model.removeHook('beforeCreate', 'myHook');
 
-        return this.Model.hooks.run('beforeCreate');
-      }).then(() => {
-        expect(hook1).to.have.been.calledOnce;
-        expect(hook2).not.to.have.been.called;
-        expect(hook3).to.have.been.calledOnce;
-        expect(hook4).to.have.been.calledOnce;
-      });
+      await this.Model.runHooks('beforeCreate');
+      expect(hook1).to.have.been.calledOnce;
+      expect(hook2).not.to.have.been.called;
+      expect(hook3).to.have.been.calledOnce;
+      expect(hook4).to.have.been.calledOnce;
     });
   });
 
-  describe('#hooks.add', () => {
-    it('should add additional hook when previous exists', function() {
+  describe('#addHook', () => {
+    it('should add additional hook when previous exists', async function() {
       const hook1 = sinon.spy(),
         hook2 = sinon.spy();
 
@@ -329,46 +325,45 @@ describe(Support.getTestDialectTeaser('Hooks'), () => {
         hooks: { beforeCreate: hook1 }
       });
 
-      Model.hooks.add('beforeCreate', hook2);
+      Model.addHook('beforeCreate', hook2);
 
-      return Model.hooks.run('beforeCreate').then(() => {
-        expect(hook1).to.have.been.calledOnce;
-        expect(hook2).to.have.been.calledOnce;
-      });
+      await Model.runHooks('beforeCreate');
+      expect(hook1).to.have.been.calledOnce;
+      expect(hook2).to.have.been.calledOnce;
     });
   });
 
   describe('promises', () => {
-    it('can return a promise', function() {
-      this.Model.hooks.add('beforeBulkCreate', () => {
-        return Sequelize.Promise.resolve();
-      });
-
-      return expect(this.Model.hooks.run('beforeBulkCreate')).to.be.fulfilled;
-    });
-
-    it('can return undefined', function() {
-      this.Model.hooks.add('beforeBulkCreate', () => {
+    it('can return a promise', async function() {
+      this.Model.beforeBulkCreate(async () => {
         // This space intentionally left blank
       });
 
-      return expect(this.Model.hooks.run('beforeBulkCreate')).to.be.fulfilled;
+      await expect(this.Model.runHooks('beforeBulkCreate')).to.be.fulfilled;
     });
 
-    it('can return an error by rejecting', function() {
-      this.Model.hooks.add('beforeCreate', () => {
-        return Promise.reject(new Error('Forbidden'));
+    it('can return undefined', async function() {
+      this.Model.beforeBulkCreate(() => {
+        // This space intentionally left blank
       });
 
-      return expect(this.Model.hooks.run('beforeCreate')).to.be.rejectedWith('Forbidden');
+      await expect(this.Model.runHooks('beforeBulkCreate')).to.be.fulfilled;
     });
 
-    it('can return an error by throwing', function() {
-      this.Model.hooks.add('beforeCreate', () => {
+    it('can return an error by rejecting', async function() {
+      this.Model.beforeCreate(async () => {
         throw new Error('Forbidden');
       });
 
-      return expect(this.Model.hooks.run('beforeCreate')).to.be.rejectedWith('Forbidden');
+      await expect(this.Model.runHooks('beforeCreate')).to.be.rejectedWith('Forbidden');
+    });
+
+    it('can return an error by throwing', async function() {
+      this.Model.beforeCreate(() => {
+        throw new Error('Forbidden');
+      });
+
+      await expect(this.Model.runHooks('beforeCreate')).to.be.rejectedWith('Forbidden');
     });
   });
 
@@ -381,10 +376,10 @@ describe(Support.getTestDialectTeaser('Hooks'), () => {
     });
 
     it('runs all beforInit/afterInit hooks', function() {
-      Support.Sequelize.hooks.add('beforeInit', this.hook1);
-      Support.Sequelize.hooks.add('beforeInit', this.hook2);
-      Support.Sequelize.hooks.add('afterInit', this.hook3);
-      Support.Sequelize.hooks.add('afterInit', this.hook4);
+      Support.Sequelize.addHook('beforeInit', 'h1', this.hook1);
+      Support.Sequelize.addHook('beforeInit', 'h2', this.hook2);
+      Support.Sequelize.addHook('afterInit', 'h3', this.hook3);
+      Support.Sequelize.addHook('afterInit', 'h4', this.hook4);
 
       Support.createSequelizeInstance();
 
@@ -394,10 +389,10 @@ describe(Support.getTestDialectTeaser('Hooks'), () => {
       expect(this.hook4).to.have.been.calledOnce;
 
       // cleanup hooks on Support.Sequelize
-      Support.Sequelize.hooks.remove('beforeInit', this.hook1);
-      Support.Sequelize.hooks.remove('beforeInit', this.hook2);
-      Support.Sequelize.hooks.remove('afterInit', this.hook3);
-      Support.Sequelize.hooks.remove('afterInit', this.hook4);
+      Support.Sequelize.removeHook('beforeInit', 'h1');
+      Support.Sequelize.removeHook('beforeInit', 'h2');
+      Support.Sequelize.removeHook('afterInit', 'h3');
+      Support.Sequelize.removeHook('afterInit', 'h4');
 
       Support.createSequelizeInstance();
 
@@ -410,10 +405,10 @@ describe(Support.getTestDialectTeaser('Hooks'), () => {
 
     it('runs all beforDefine/afterDefine hooks', function() {
       const sequelize = Support.createSequelizeInstance();
-      sequelize.hooks.add('beforeDefine', this.hook1);
-      sequelize.hooks.add('beforeDefine', this.hook2);
-      sequelize.hooks.add('afterDefine', this.hook3);
-      sequelize.hooks.add('afterDefine', this.hook4);
+      sequelize.addHook('beforeDefine', this.hook1);
+      sequelize.addHook('beforeDefine', this.hook2);
+      sequelize.addHook('afterDefine', this.hook3);
+      sequelize.addHook('afterDefine', this.hook4);
       sequelize.define('Test', {});
       expect(this.hook1).to.have.been.calledOnce;
       expect(this.hook2).to.have.been.calledOnce;

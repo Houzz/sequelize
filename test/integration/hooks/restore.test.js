@@ -7,7 +7,7 @@ const chai = require('chai'),
   sinon = require('sinon');
 
 describe(Support.getTestDialectTeaser('Hooks'), () => {
-  beforeEach(function() {
+  beforeEach(async function() {
     this.User = this.sequelize.define('User', {
       username: {
         type: DataTypes.STRING,
@@ -29,68 +29,59 @@ describe(Support.getTestDialectTeaser('Hooks'), () => {
       paranoid: true
     });
 
-    return this.sequelize.sync({ force: true });
+    await this.sequelize.sync({ force: true });
   });
 
   describe('#restore', () => {
     describe('on success', () => {
-      it('should run hooks', function() {
+      it('should run hooks', async function() {
         const beforeHook = sinon.spy(),
           afterHook = sinon.spy();
 
-        this.ParanoidUser.hooks.add('beforeRestore', beforeHook);
-        this.ParanoidUser.hooks.add('afterRestore', afterHook);
+        this.ParanoidUser.beforeRestore(beforeHook);
+        this.ParanoidUser.afterRestore(afterHook);
 
-        return this.ParanoidUser.create({ username: 'Toni', mood: 'happy' }).then(user => {
-          return user.destroy().then(() => {
-            return user.restore().then(() => {
-              expect(beforeHook).to.have.been.calledOnce;
-              expect(afterHook).to.have.been.calledOnce;
-            });
-          });
-        });
+        const user = await this.ParanoidUser.create({ username: 'Toni', mood: 'happy' });
+        await user.destroy();
+        await user.restore();
+        expect(beforeHook).to.have.been.calledOnce;
+        expect(afterHook).to.have.been.calledOnce;
       });
     });
 
     describe('on error', () => {
-      it('should return an error from before', function() {
+      it('should return an error from before', async function() {
         const beforeHook = sinon.spy(),
           afterHook = sinon.spy();
 
-        this.ParanoidUser.hooks.add('beforeRestore', () => {
+        this.ParanoidUser.beforeRestore(() => {
           beforeHook();
           throw new Error('Whoops!');
         });
-        this.ParanoidUser.hooks.add('afterRestore', afterHook);
+        this.ParanoidUser.afterRestore(afterHook);
 
-        return this.ParanoidUser.create({ username: 'Toni', mood: 'happy' }).then(user => {
-          return user.destroy().then(() => {
-            return expect(user.restore()).to.be.rejected.then(() => {
-              expect(beforeHook).to.have.been.calledOnce;
-              expect(afterHook).not.to.have.been.called;
-            });
-          });
-        });
+        const user = await this.ParanoidUser.create({ username: 'Toni', mood: 'happy' });
+        await user.destroy();
+        await expect(user.restore()).to.be.rejected;
+        expect(beforeHook).to.have.been.calledOnce;
+        expect(afterHook).not.to.have.been.called;
       });
 
-      it('should return an error from after', function() {
+      it('should return an error from after', async function() {
         const beforeHook = sinon.spy(),
           afterHook = sinon.spy();
 
-        this.ParanoidUser.hooks.add('beforeRestore', beforeHook);
-        this.ParanoidUser.hooks.add('afterRestore', () => {
+        this.ParanoidUser.beforeRestore(beforeHook);
+        this.ParanoidUser.afterRestore(() => {
           afterHook();
           throw new Error('Whoops!');
         });
 
-        return this.ParanoidUser.create({ username: 'Toni', mood: 'happy' }).then(user => {
-          return user.destroy().then(() => {
-            return expect(user.restore()).to.be.rejected.then(() => {
-              expect(beforeHook).to.have.been.calledOnce;
-              expect(afterHook).to.have.been.calledOnce;
-            });
-          });
-        });
+        const user = await this.ParanoidUser.create({ username: 'Toni', mood: 'happy' });
+        await user.destroy();
+        await expect(user.restore()).to.be.rejected;
+        expect(beforeHook).to.have.been.calledOnce;
+        expect(afterHook).to.have.been.calledOnce;
       });
     });
   });

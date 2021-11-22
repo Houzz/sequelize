@@ -15,7 +15,7 @@ describe(Support.getTestDialectTeaser('DAO'), () => {
           name: { type: DataTypes.STRING }
         });
 
-        const user = new User({ id: 1, name: 'Mick' });
+        const user = User.build({ id: 1, name: 'Mick' });
 
         expect(user.get('id')).to.equal(1);
         expect(user.get('name')).to.equal('Mick');
@@ -32,7 +32,7 @@ describe(Support.getTestDialectTeaser('DAO'), () => {
           identifier: { type: DataTypes.STRING, primaryKey: true }
         });
 
-        const user = new User({ identifier: 'identifier' });
+        const user = User.build({ identifier: 'identifier' });
 
         expect(user.get('identifier')).to.equal('identifier');
         user.set('identifier', 'another identifier');
@@ -44,7 +44,7 @@ describe(Support.getTestDialectTeaser('DAO'), () => {
           identifier: { type: DataTypes.STRING, primaryKey: true }
         });
 
-        const user = new User({}, {
+        const user = User.build({}, {
           isNewRecord: false
         });
 
@@ -64,7 +64,7 @@ describe(Support.getTestDialectTeaser('DAO'), () => {
           underscored: true
         });
 
-        const user = new User({}, {
+        const user = User.build({}, {
           isNewRecord: false
         });
 
@@ -89,7 +89,7 @@ describe(Support.getTestDialectTeaser('DAO'), () => {
           }
         });
 
-        const user = new User();
+        const user = User.build();
 
         user.set({
           name: 'antonio banderaz',
@@ -105,7 +105,7 @@ describe(Support.getTestDialectTeaser('DAO'), () => {
         expect(user.dataValues.email).not.to.be.ok;
       });
 
-      it('allows use of sequelize.fn and sequelize.col in date and bool fields', function() {
+      it('allows use of sequelize.fn and sequelize.col in date and bool fields', async function() {
         const User = this.sequelize.define('User', {
           d: DataTypes.DATE,
           b: DataTypes.BOOLEAN,
@@ -115,30 +115,26 @@ describe(Support.getTestDialectTeaser('DAO'), () => {
           }
         }, { timestamps: false });
 
-        return User.sync({ force: true }).then(() => {
-          return User.create({}).then(user => {
-            // Create the user first to set the proper default values. PG does not support column references in insert,
-            // so we must create a record with the right value for always_false, then reference it in an update
-            let now = dialect === 'sqlite' ? this.sequelize.fn('', this.sequelize.fn('datetime', 'now')) : this.sequelize.fn('NOW');
-            if (dialect === 'mssql') {
-              now = this.sequelize.fn('', this.sequelize.fn('getdate'));
-            }
-            user.set({
-              d: now,
-              b: this.sequelize.col('always_false')
-            });
-
-            expect(user.get('d')).to.be.instanceof(Sequelize.Utils.Fn);
-            expect(user.get('b')).to.be.instanceof(Sequelize.Utils.Col);
-
-            return user.save().then(() => {
-              return user.reload().then(() => {
-                expect(user.d).to.equalDate(new Date());
-                expect(user.b).to.equal(false);
-              });
-            });
-          });
+        await User.sync({ force: true });
+        const user = await User.create({});
+        // Create the user first to set the proper default values. PG does not support column references in insert,
+        // so we must create a record with the right value for always_false, then reference it in an update
+        let now = dialect === 'sqlite' ? this.sequelize.fn('', this.sequelize.fn('datetime', 'now')) : this.sequelize.fn('NOW');
+        if (dialect === 'mssql') {
+          now = this.sequelize.fn('', this.sequelize.fn('getdate'));
+        }
+        user.set({
+          d: now,
+          b: this.sequelize.col('always_false')
         });
+
+        expect(user.get('d')).to.be.instanceof(Sequelize.Utils.Fn);
+        expect(user.get('b')).to.be.instanceof(Sequelize.Utils.Col);
+
+        await user.save();
+        await user.reload();
+        expect(user.d).to.equalDate(new Date());
+        expect(user.b).to.equal(false);
       });
 
       describe('includes', () => {
@@ -157,7 +153,7 @@ describe(Support.getTestDialectTeaser('DAO'), () => {
           Product.hasMany(Tag);
           Product.belongsTo(User);
 
-          const product = new Product({}, {
+          const product = Product.build({}, {
             include: [
               User,
               Tag
@@ -200,7 +196,7 @@ describe(Support.getTestDialectTeaser('DAO'), () => {
           Product.hasMany(Tag);
           Product.belongsTo(User);
 
-          const product = new Product({}, {
+          const product = Product.build({}, {
             include: [
               User,
               Tag
@@ -241,7 +237,7 @@ describe(Support.getTestDialectTeaser('DAO'), () => {
           }
         });
 
-        const product = new Product({
+        const product = Product.build({
           price: 10
         });
         expect(product.get('price')).to.equal(1000);
@@ -260,7 +256,7 @@ describe(Support.getTestDialectTeaser('DAO'), () => {
           }
         });
 
-        const product = new Product({
+        const product = Product.build({
           priceInCents: 1000
         });
         expect(product.get('price')).to.equal(10);
@@ -282,13 +278,13 @@ describe(Support.getTestDialectTeaser('DAO'), () => {
           }
         });
 
-        const product = new Product({
+        const product = Product.build({
           price: 10
         });
         expect(product.toJSON()).to.deep.equal({ withTaxes: 1250, price: 1000, id: null });
       });
 
-      it('should work with save', function() {
+      it('should work with save', async function() {
         const Contact = this.sequelize.define('Contact', {
           first: { type: Sequelize.STRING },
           last: { type: Sequelize.STRING },
@@ -304,18 +300,16 @@ describe(Support.getTestDialectTeaser('DAO'), () => {
           }
         });
 
-        return this.sequelize.sync().then(() => {
-          const contact = new Contact({
-            first: 'My',
-            last: 'Name',
-            tags: ['yes', 'no']
-          });
-          expect(contact.get('tags')).to.deep.equal(['yes', 'no']);
-
-          return contact.save().then(me => {
-            expect(me.get('tags')).to.deep.equal(['yes', 'no']);
-          });
+        await this.sequelize.sync();
+        const contact = Contact.build({
+          first: 'My',
+          last: 'Name',
+          tags: ['yes', 'no']
         });
+        expect(contact.get('tags')).to.deep.equal(['yes', 'no']);
+
+        const me = await contact.save();
+        expect(me.get('tags')).to.deep.equal(['yes', 'no']);
       });
 
       describe('plain', () => {
@@ -330,7 +324,7 @@ describe(Support.getTestDialectTeaser('DAO'), () => {
 
           Product.belongsTo(User);
 
-          const product = new Product({}, {
+          const product = Product.build({}, {
             include: [
               User
             ]
@@ -357,7 +351,7 @@ describe(Support.getTestDialectTeaser('DAO'), () => {
             title: Sequelize.STRING
           });
 
-          const product = new Product({
+          const product = Product.build({
             id: 1,
             title: 'Chair'
           }, { raw: true });
@@ -401,7 +395,7 @@ describe(Support.getTestDialectTeaser('DAO'), () => {
 
         Product.belongsTo(User);
 
-        const product = new Product({}, {
+        const product = Product.build({}, {
           include: [
             User
           ]
@@ -432,22 +426,18 @@ describe(Support.getTestDialectTeaser('DAO'), () => {
     });
 
     describe('changed', () => {
-      it('should return false if object was built from database', function() {
+      it('should return false if object was built from database', async function() {
         const User = this.sequelize.define('User', {
           name: { type: DataTypes.STRING }
         });
 
-        return User.sync().then(() => {
-          return User.create({ name: 'Jan Meier' }).then(user => {
-            expect(user.changed('name')).to.be.false;
-            expect(user.changed()).not.to.be.ok;
-          });
-        }).then(() => {
-          return User.bulkCreate([{ name: 'Jan Meier' }]).then(([user]) => {
-            expect(user.changed('name')).to.be.false;
-            expect(user.changed()).not.to.be.ok;
-          });
-        });
+        await User.sync();
+        const user0 = await User.create({ name: 'Jan Meier' });
+        expect(user0.changed('name')).to.be.false;
+        expect(user0.changed()).not.to.be.ok;
+        const [user] = await User.bulkCreate([{ name: 'Jan Meier' }]);
+        expect(user.changed('name')).to.be.false;
+        expect(user.changed()).not.to.be.ok;
       });
 
       it('should return true if previous value is different', function() {
@@ -455,7 +445,7 @@ describe(Support.getTestDialectTeaser('DAO'), () => {
           name: { type: DataTypes.STRING }
         });
 
-        const user = new User({
+        const user = User.build({
           name: 'Jan Meier'
         });
         user.set('name', 'Mick Hansen');
@@ -463,51 +453,49 @@ describe(Support.getTestDialectTeaser('DAO'), () => {
         expect(user.changed()).to.be.ok;
       });
 
-      it('should return false immediately after saving', function() {
+      it('should return false immediately after saving', async function() {
         const User = this.sequelize.define('User', {
           name: { type: DataTypes.STRING }
         });
 
-        return User.sync().then(() => {
-          const user = new User({
-            name: 'Jan Meier'
-          });
-          user.set('name', 'Mick Hansen');
-          expect(user.changed('name')).to.be.true;
-          expect(user.changed()).to.be.ok;
-
-          return user.save().then(() => {
-            expect(user.changed('name')).to.be.false;
-            expect(user.changed()).not.to.be.ok;
-          });
+        await User.sync();
+        const user = User.build({
+          name: 'Jan Meier'
         });
+        user.set('name', 'Mick Hansen');
+        expect(user.changed('name')).to.be.true;
+        expect(user.changed()).to.be.ok;
+
+        await user.save();
+        expect(user.changed('name')).to.be.false;
+        expect(user.changed()).not.to.be.ok;
       });
 
-      it('should be available to a afterUpdate hook', function() {
+      it('should be available to a afterUpdate hook', async function() {
         const User = this.sequelize.define('User', {
           name: { type: DataTypes.STRING }
         });
         let changed;
 
-        User.hooks.add('afterUpdate', instance => {
+        User.afterUpdate(instance => {
           changed = instance.changed();
           return;
         });
 
-        return User.sync({ force: true }).then(() => {
-          return User.create({
-            name: 'Ford Prefect'
-          });
-        }).then(user => {
-          return user.update({
-            name: 'Arthur Dent'
-          });
-        }).then(user => {
-          expect(changed).to.be.ok;
-          expect(changed.length).to.be.ok;
-          expect(changed).to.include('name');
-          expect(user.changed()).not.to.be.ok;
+        await User.sync({ force: true });
+
+        const user0 = await User.create({
+          name: 'Ford Prefect'
         });
+
+        const user = await user0.update({
+          name: 'Arthur Dent'
+        });
+
+        expect(changed).to.be.ok;
+        expect(changed.length).to.be.ok;
+        expect(changed).to.include('name');
+        expect(user.changed()).not.to.be.ok;
       });
     });
 
@@ -518,7 +506,7 @@ describe(Support.getTestDialectTeaser('DAO'), () => {
           title: { type: DataTypes.STRING }
         });
 
-        const user = new User({
+        const user = User.build({
           name: 'Jan Meier',
           title: 'Mr'
         });
@@ -534,7 +522,7 @@ describe(Support.getTestDialectTeaser('DAO'), () => {
           name: { type: DataTypes.STRING }
         });
 
-        const user = new User({
+        const user = User.build({
           name: 'Jan Meier'
         });
         user.set('name', 'Mick Hansen');
